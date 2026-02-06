@@ -116,6 +116,24 @@
 			</ul>
 		</div>
 	</section>
+
+	<section class="settings-section">
+		<h2 class="section-title">Legal</h2>
+		<div class="legal-links">
+			<a href="/privacy" class="legal-link">
+				Privacy Policy
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+					<path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" />
+				</svg>
+			</a>
+			<a href="/terms" class="legal-link">
+				Terms of Service
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+					<path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" />
+				</svg>
+			</a>
+		</div>
+	</section>
 </div>
 
 <style>
@@ -217,6 +235,37 @@
 
 	.info-card li {
 		margin-bottom: 4px;
+	}
+
+	.legal-links {
+		display: flex;
+		flex-direction: column;
+		background: var(--bg-secondary);
+		border-radius: 12px;
+		overflow: hidden;
+	}
+
+	.legal-link {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 14px 16px;
+		font-size: 14px;
+		color: var(--text-primary);
+		text-decoration: none;
+	}
+
+	.legal-link:hover {
+		background: var(--bg-hover);
+		text-decoration: none;
+	}
+
+	.legal-link + .legal-link {
+		border-top: 1px solid var(--border-color);
+	}
+
+	.legal-link svg {
+		color: var(--text-tertiary);
 	}
 
 	@media (max-width: 600px) {

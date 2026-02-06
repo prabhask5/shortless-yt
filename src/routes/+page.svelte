@@ -145,6 +145,14 @@
 		<ErrorBanner message={error} onDismiss={() => (error = '')} />
 	{/if}
 
+	<div class="hero">
+		<h1 class="hero-title">YouTube without Shorts</h1>
+		<p class="hero-desc">
+			Shortless filters out short-form videos so you can focus on the content you actually want to
+			watch. Sign in with Google to get personalized recommendations from your subscriptions.
+		</p>
+	</div>
+
 	{#if $searchHistory.length > 0}
 		<div class="recent-section">
 			<div class="recent-header">
@@ -195,6 +203,12 @@
 			<div class="end-line"></div>
 		</div>
 	{/if}
+
+	<footer class="home-footer">
+		<a href="/privacy">Privacy Policy</a>
+		<span class="footer-dot">&middot;</span>
+		<a href="/terms">Terms of Service</a>
+	</footer>
 </div>
 
 <style>
@@ -216,6 +230,22 @@
 		gap: 12px;
 		color: var(--red-text);
 		font-size: 14px;
+	}
+
+	.hero {
+		margin-bottom: 24px;
+	}
+
+	.hero-title {
+		font-size: 20px;
+		font-weight: 600;
+		margin-bottom: 4px;
+	}
+
+	.hero-desc {
+		font-size: 14px;
+		color: var(--text-secondary);
+		line-height: 1.5;
 	}
 
 	.recent-section {
@@ -300,6 +330,30 @@
 
 	.scroll-sentinel {
 		height: 1px;
+	}
+
+	.home-footer {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+		padding: 24px 0 16px;
+		font-size: 12px;
+		color: var(--text-tertiary);
+	}
+
+	.home-footer a {
+		color: var(--text-tertiary);
+		text-decoration: none;
+	}
+
+	.home-footer a:hover {
+		color: var(--text-secondary);
+		text-decoration: underline;
+	}
+
+	.footer-dot {
+		font-size: 10px;
 	}
 
 	@media (max-width: 768px) {
