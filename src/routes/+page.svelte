@@ -21,6 +21,8 @@
 	let reachedEnd = $state(false);
 	let abortController: AbortController | null = null;
 	let lastAuthSignedIn: boolean | null = null;
+	let sentinelEl: HTMLDivElement | undefined = $state();
+	let observer: IntersectionObserver | null = null;
 
 	async function loadRecommended(pageToken?: string) {
 		if (!pageToken) {
@@ -71,24 +73,20 @@
 		} finally {
 			loading = false;
 			loadingMore = false;
-			scheduleScrollCheck();
 		}
 	}
 
-	function scheduleScrollCheck() {
-		if (!browser) return;
-		requestAnimationFrame(() => handleScroll());
-	}
-
-	function handleScroll() {
-		if (!browser || loadingMore || !nextPageToken) return;
-		const scrollY = window.scrollY;
-		const windowHeight = window.innerHeight;
-		const docHeight = document.documentElement.scrollHeight;
-
-		if (docHeight - scrollY - windowHeight < 800) {
-			loadRecommended(nextPageToken);
-		}
+	function setupObserver() {
+		if (!browser || observer) return;
+		observer = new IntersectionObserver(
+			(entries) => {
+				if (entries[0]?.isIntersecting && !loadingMore && nextPageToken) {
+					loadRecommended(nextPageToken);
+				}
+			},
+			{ rootMargin: '800px' }
+		);
+		if (sentinelEl) observer.observe(sentinelEl);
 	}
 
 	function handleSearchClick(query: string) {
@@ -113,16 +111,21 @@
 		loadingMore = false;
 	});
 
-	onMount(() => {
-		loadRecommended();
-
-		if (browser) {
-			window.addEventListener('scroll', handleScroll, { passive: true });
+	$effect(() => {
+		if (sentinelEl && browser) {
+			setupObserver();
 			return () => {
-				window.removeEventListener('scroll', handleScroll);
-				if (abortController) abortController.abort();
+				observer?.disconnect();
+				observer = null;
 			};
 		}
+	});
+
+	onMount(() => {
+		loadRecommended();
+		return () => {
+			if (abortController) abortController.abort();
+		};
 	});
 </script>
 
@@ -164,6 +167,7 @@
 	{/if}
 
 	<VideoGrid {videos} loading={loading || loadingMore} layout="grid" />
+	<div bind:this={sentinelEl} class="scroll-sentinel" aria-hidden="true"></div>
 
 	{#if !loading && !loadingMore && videos.length === 0 && !error}
 		<div class="empty-state">
@@ -292,6 +296,10 @@
 
 	.end-text {
 		white-space: nowrap;
+	}
+
+	.scroll-sentinel {
+		height: 1px;
 	}
 
 	@media (max-width: 768px) {

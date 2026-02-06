@@ -95,9 +95,10 @@
 		display: flex;
 		align-items: center;
 		gap: 12px;
-		background: var(--bg-chip-active);
-		color: var(--bg-primary);
-		border-radius: 8px;
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		border: 1px solid var(--border-color);
+		border-radius: 24px;
 		padding: 10px 12px 10px 16px;
 		box-shadow: var(--shadow-lg);
 		font-size: 14px;
@@ -106,7 +107,7 @@
 
 	.toast-icon {
 		flex-shrink: 0;
-		opacity: 0.8;
+		color: var(--text-secondary);
 	}
 
 	.toast-text {
@@ -116,27 +117,26 @@
 	.toast-action {
 		font-size: 14px;
 		font-weight: 600;
-		color: #3ea6ff;
+		color: var(--text-link);
 		padding: 6px 12px;
 		border-radius: 18px;
 		white-space: nowrap;
 	}
 
 	.toast-action:hover {
-		background: rgba(62, 166, 255, 0.1);
+		background: var(--bg-hover);
 	}
 
 	.toast-dismiss {
 		flex-shrink: 0;
-		color: var(--bg-primary);
-		opacity: 0.7;
+		color: var(--text-secondary);
 		width: 28px;
 		height: 28px;
 		min-height: 28px;
 	}
 
 	.toast-dismiss:hover {
-		opacity: 1;
+		color: var(--text-primary);
 	}
 
 	@media (max-width: 768px) {

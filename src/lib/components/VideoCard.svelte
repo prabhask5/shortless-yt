@@ -23,7 +23,15 @@
 
 <a href="/watch/{video.id}" class="video-card {layout}" data-sveltekit-preload-data="hover">
 	<div class="thumbnail-container">
-		<img src={thumbnail} alt={video.title} class="thumbnail" loading="lazy" decoding="async" />
+		<img
+			src={thumbnail}
+			alt={video.title}
+			class="thumbnail"
+			loading="lazy"
+			decoding="async"
+			width="480"
+			height="270"
+		/>
 		{#if duration}
 			<span class="duration-badge">{duration}</span>
 		{/if}
@@ -52,6 +60,8 @@
 		border-radius: 12px;
 		transition: background-color 0.15s;
 		cursor: pointer;
+		content-visibility: auto;
+		contain-intrinsic-size: auto 300px;
 	}
 
 	.video-card:hover {

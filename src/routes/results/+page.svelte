@@ -17,6 +17,8 @@
 	let filteredCount = $state(0);
 	let reachedEnd = $state(false);
 	let abortController: AbortController | null = null;
+	let sentinelEl: HTMLDivElement | undefined = $state();
+	let observer: IntersectionObserver | null = null;
 
 	async function search(pageToken?: string) {
 		if (!query) return;
@@ -65,28 +67,20 @@
 		} finally {
 			loading = false;
 			loadingMore = false;
-			scheduleScrollCheck();
 		}
 	}
 
-	// Re-check scroll position after content settles, in case a page returned
-	// only filtered-out Shorts and added no height — the scroll listener won't
-	// fire on its own since the user hasn't scrolled.
-	function scheduleScrollCheck() {
-		if (!browser) return;
-		requestAnimationFrame(() => handleScroll());
-	}
-
-	// Infinite scroll
-	function handleScroll() {
-		if (!browser || loadingMore || !nextPageToken) return;
-		const scrollY = window.scrollY;
-		const windowHeight = window.innerHeight;
-		const docHeight = document.documentElement.scrollHeight;
-
-		if (docHeight - scrollY - windowHeight < 800) {
-			search(nextPageToken);
-		}
+	function setupObserver() {
+		if (!browser || observer) return;
+		observer = new IntersectionObserver(
+			(entries) => {
+				if (entries[0]?.isIntersecting && !loadingMore && nextPageToken) {
+					search(nextPageToken);
+				}
+			},
+			{ rootMargin: '800px' }
+		);
+		if (sentinelEl) observer.observe(sentinelEl);
 	}
 
 	// Watch for query changes
@@ -103,14 +97,20 @@
 		loadingMore = false;
 	});
 
-	onMount(() => {
-		if (browser) {
-			window.addEventListener('scroll', handleScroll, { passive: true });
+	$effect(() => {
+		if (sentinelEl && browser) {
+			setupObserver();
 			return () => {
-				window.removeEventListener('scroll', handleScroll);
-				if (abortController) abortController.abort();
+				observer?.disconnect();
+				observer = null;
 			};
 		}
+	});
+
+	onMount(() => {
+		return () => {
+			if (abortController) abortController.abort();
+		};
 	});
 </script>
 
@@ -138,6 +138,7 @@
 	{/if}
 
 	<VideoGrid {videos} loading={loading || loadingMore} layout="list" />
+	<div bind:this={sentinelEl} class="scroll-sentinel" aria-hidden="true"></div>
 
 	{#if !loading && !loadingMore && videos.length === 0 && query && !error}
 		<div class="no-results">
@@ -194,6 +195,10 @@
 	.no-results svg {
 		margin-bottom: 16px;
 		opacity: 0.4;
+	}
+
+	.scroll-sentinel {
+		height: 1px;
 	}
 
 	.end-of-results {
