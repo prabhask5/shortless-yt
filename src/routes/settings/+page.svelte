@@ -27,7 +27,7 @@
 </script>
 
 <svelte:head>
-	<title>Settings - Shortless</title>
+	<title>Settings - Shortless Youtube</title>
 </svelte:head>
 
 <div class="settings-page">

@@ -115,7 +115,7 @@
 </script>
 
 <svelte:head>
-	<title>{query ? `${query} - Shortless` : 'Search - Shortless'}</title>
+	<title>{query ? `${query} - Shortless Youtube` : 'Search - Shortless Youtube'}</title>
 </svelte:head>
 
 <div class="results-page">

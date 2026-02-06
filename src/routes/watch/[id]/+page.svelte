@@ -76,7 +76,7 @@
 </script>
 
 <svelte:head>
-	<title>{video?.title || 'Loading...'} - Shortless</title>
+	<title>{video?.title || 'Loading...'} - Shortless Youtube</title>
 </svelte:head>
 
 {#if loading}
