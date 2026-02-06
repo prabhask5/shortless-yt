@@ -145,14 +145,6 @@
 		<ErrorBanner message={error} onDismiss={() => (error = '')} />
 	{/if}
 
-	<div class="hero">
-		<h1 class="hero-title">YouTube without Shorts</h1>
-		<p class="hero-desc">
-			Shortless filters out short-form videos so you can focus on the content you actually want to
-			watch. Sign in with Google to get personalized recommendations from your subscriptions.
-		</p>
-	</div>
-
 	{#if $searchHistory.length > 0}
 		<div class="recent-section">
 			<div class="recent-header">
@@ -205,6 +197,8 @@
 	{/if}
 
 	<footer class="home-footer">
+		<a href="/about">About</a>
+		<span class="footer-dot">&middot;</span>
 		<a href="/privacy">Privacy Policy</a>
 		<span class="footer-dot">&middot;</span>
 		<a href="/terms">Terms of Service</a>
@@ -230,22 +224,6 @@
 		gap: 12px;
 		color: var(--red-text);
 		font-size: 14px;
-	}
-
-	.hero {
-		margin-bottom: 24px;
-	}
-
-	.hero-title {
-		font-size: 20px;
-		font-weight: 600;
-		margin-bottom: 4px;
-	}
-
-	.hero-desc {
-		font-size: 14px;
-		color: var(--text-secondary);
-		line-height: 1.5;
 	}
 
 	.recent-section {
