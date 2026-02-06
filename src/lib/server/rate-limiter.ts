@@ -12,6 +12,7 @@ const MAX_REQUESTS: Record<string, number> = {
 	'/api/related': 30,
 	'/api/comments': 40,
 	'/api/isShort': 10,
+	'/api/recommended': 30,
 	'/api/auth/login': 10,
 	'/api/auth/callback': 10,
 	'/api/auth/logout': 10,

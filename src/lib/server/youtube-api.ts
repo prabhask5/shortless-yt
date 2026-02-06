@@ -318,6 +318,181 @@ export async function getCommentReplies(
 	};
 }
 
+async function ytFetchAuth(
+	endpoint: string,
+	params: Record<string, string>,
+	accessToken: string
+): Promise<unknown> {
+	const url = new URL(`${API_BASE}/${endpoint}`);
+	for (const [k, v] of Object.entries(params)) {
+		if (v) url.searchParams.set(k, v);
+	}
+
+	const res = await fetch(url.toString(), {
+		headers: { Authorization: `Bearer ${accessToken}` }
+	});
+	if (!res.ok) {
+		const body = await res.text();
+		logError(`YouTube API error (auth): ${endpoint}`, {
+			status: res.status,
+			body: body.slice(0, 500)
+		});
+		if (res.status === 429) {
+			throw new Error('YouTube API quota exceeded');
+		}
+		throw new Error(`YouTube API error ${res.status}: ${body.slice(0, 200)}`);
+	}
+	return res.json();
+}
+
+export async function getTrendingVideos(
+	pageToken?: string,
+	regionCode = 'US'
+): Promise<SearchResponse> {
+	const cacheKey = `trending:${regionCode}:${pageToken || ''}`;
+	const cached = cacheGet<SearchResponse>(cacheKey);
+	if (cached && !cached.stale) {
+		logApiCall('trending', { regionCode, cacheHit: 'true' }, true);
+		return cached.data;
+	}
+
+	const params: Record<string, string> = {
+		part: 'snippet,contentDetails,statistics',
+		chart: 'mostPopular',
+		regionCode,
+		maxResults: '25'
+	};
+	if (pageToken) params.pageToken = pageToken;
+
+	logApiCall('videos.list (trending)', params, false);
+	const data: any = await ytFetch('videos', params);
+
+	const videos = (data.items || []).map((item: any) => mapVideoItem(item));
+	const visible = videos.filter((v: VideoItem) => !v.isShort);
+	const filteredCount = videos.length - visible.length;
+
+	// Cache individual videos
+	for (const video of visible) {
+		cacheSet(`video:${video.id}`, video, getCacheTTL('video'));
+	}
+
+	const result: SearchResponse = {
+		items: visible,
+		nextPageToken: data.nextPageToken,
+		totalResults: visible.length,
+		filteredCount,
+		backfillPages: 0
+	};
+
+	cacheSet(cacheKey, result, getCacheTTL('trending'));
+	return result;
+}
+
+export async function getSubscriptionFeed(
+	accessToken: string,
+	userId: string,
+	pageToken?: string,
+	offset = 0
+): Promise<SearchResponse> {
+	try {
+		// Check cached subscription channel IDs
+		const subsCacheKey = `subs:${userId}`;
+		let channelIds: string[];
+		const cachedSubs = cacheGet<string[]>(subsCacheKey);
+
+		if (cachedSubs && !cachedSubs.stale) {
+			channelIds = cachedSubs.data;
+		} else {
+			// Fetch subscriptions (1 quota unit)
+			logApiCall('subscriptions.list', { mine: 'true' }, false);
+			const subsData: any = await ytFetchAuth(
+				'subscriptions',
+				{
+					part: 'snippet',
+					mine: 'true',
+					maxResults: '50',
+					order: 'relevance'
+				},
+				accessToken
+			);
+
+			channelIds = (subsData.items || [])
+				.map((item: any) => item.snippet?.resourceId?.channelId)
+				.filter(Boolean);
+
+			if (channelIds.length === 0) {
+				// No subscriptions — fall back to trending
+				return getTrendingVideos(pageToken);
+			}
+
+			cacheSet(subsCacheKey, channelIds, getCacheTTL('subscriptions'));
+		}
+
+		// Pick ~4 random channels, rotate via offset
+		const shuffled = [...channelIds];
+		// Deterministic shuffle based on offset to rotate selection
+		const seed = offset;
+		for (let i = shuffled.length - 1; i > 0; i--) {
+			const j = (seed + i * 7) % (i + 1);
+			[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+		}
+		const selectedChannels = shuffled.slice(0, 4);
+
+		// Derive upload playlist IDs (UC → UU)
+		const playlistIds = selectedChannels.map((id) => 'UU' + id.slice(2));
+
+		// Fetch recent uploads from each (1 unit each)
+		const allVideoIds: string[] = [];
+		const fetchPromises = playlistIds.map(async (playlistId) => {
+			try {
+				logApiCall('playlistItems.list', { playlistId }, false);
+				const plData: any = await ytFetch('playlistItems', {
+					part: 'snippet',
+					playlistId,
+					maxResults: '8'
+				});
+				return (plData.items || [])
+					.map((item: any) => item.snippet?.resourceId?.videoId)
+					.filter(Boolean);
+			} catch {
+				return [];
+			}
+		});
+
+		const results = await Promise.all(fetchPromises);
+		for (const ids of results) {
+			allVideoIds.push(...ids);
+		}
+
+		if (allVideoIds.length === 0) {
+			return getTrendingVideos(pageToken);
+		}
+
+		// Hydrate in one batch (1 unit)
+		const videos = await getVideosByIds(allVideoIds.join(','));
+		const visible = videos.filter((v) => !v.isShort);
+
+		// Shuffle results
+		for (let i = visible.length - 1; i > 0; i--) {
+			const j = Math.floor(Math.random() * (i + 1));
+			[visible[i], visible[j]] = [visible[j], visible[i]];
+		}
+
+		return {
+			items: visible,
+			nextPageToken: offset + 4 < channelIds.length ? String(offset + 4) : undefined,
+			totalResults: visible.length,
+			filteredCount: videos.length - visible.length,
+			backfillPages: 0
+		};
+	} catch (err) {
+		logError('Subscription feed failed, falling back to trending', {
+			error: err instanceof Error ? err.message : String(err)
+		});
+		return getTrendingVideos(pageToken);
+	}
+}
+
 function mapComment(item: any): Comment {
 	const snippet = item?.snippet || {};
 	return {

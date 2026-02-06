@@ -10,6 +10,7 @@ const API_CACHE_TTL = {
 	'/api/videos': 12 * 60 * 60 * 1000,
 	'/api/comments': 5 * 60 * 1000,
 	'/api/related': 10 * 60 * 1000,
+	'/api/recommended': 30 * 60 * 1000,
 };
 
 // Static assets to precache

@@ -7,7 +7,9 @@ const DEFAULT_TTLS = {
 	video: 12 * 60 * 60 * 1000, // 12 hours
 	comments: 5 * 60 * 1000, // 5 minutes
 	related: 10 * 60 * 1000, // 10 minutes
-	shortCheck: 7 * 24 * 60 * 60 * 1000 // 7 days
+	shortCheck: 7 * 24 * 60 * 60 * 1000, // 7 days
+	trending: 30 * 60 * 1000, // 30 minutes
+	subscriptions: 60 * 60 * 1000 // 1 hour
 } as const;
 
 const MAX_CACHE_SIZE = 5000;
