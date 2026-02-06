@@ -1,8 +1,8 @@
 /// <reference lib="webworker" />
 
-const CACHE_NAME = 'shortless-youtube-v1';
-const STATIC_CACHE = 'shortless-youtube-static-v1';
-const API_CACHE = 'shortless-youtube-api-v1';
+const CACHE_NAME = 'shortless-youtube-v2';
+const STATIC_CACHE = 'shortless-youtube-static-v2';
+const API_CACHE = 'shortless-youtube-api-v2';
 
 const MAX_API_CACHE_ENTRIES = 100;
 const API_CACHE_TTL = {
@@ -20,12 +20,18 @@ const PRECACHE_URLS = [
 	'/manifest.webmanifest',
 ];
 
-// Install: precache static assets
+// Listen for skip waiting message from client
+self.addEventListener('message', (event) => {
+	if (event.data && event.data.type === 'SKIP_WAITING') {
+		self.skipWaiting();
+	}
+});
+
+// Install: precache static assets (don't skipWaiting automatically — let the client decide)
 self.addEventListener('install', (event) => {
 	event.waitUntil(
 		caches.open(STATIC_CACHE)
 			.then(cache => cache.addAll(PRECACHE_URLS))
-			.then(() => self.skipWaiting())
 	);
 });
 
@@ -51,8 +57,9 @@ self.addEventListener('fetch', (event) => {
 
 	// API routes: stale-while-revalidate
 	if (url.pathname.startsWith('/api/')) {
-		// Don't cache auth endpoints
+		// Don't cache auth-dependent endpoints
 		if (url.pathname.startsWith('/api/auth/')) return;
+		if (url.pathname.startsWith('/api/recommended')) return;
 
 		event.respondWith(
 			caches.open(API_CACHE).then(async (cache) => {

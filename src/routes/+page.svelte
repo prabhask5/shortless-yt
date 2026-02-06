@@ -4,6 +4,7 @@
 	import { beforeNavigate } from '$app/navigation';
 	import { browser } from '$app/environment';
 	import { searchHistory, clearHistory } from '$lib/stores/search-history';
+	import { authState, authLoading } from '$lib/stores/auth';
 	import { page } from '$app/stores';
 	import type { VideoItem, SearchResponse } from '$lib/types';
 	import VideoGrid from '$lib/components/VideoGrid.svelte';
@@ -19,6 +20,7 @@
 	let nextOffset = $state(0);
 	let reachedEnd = $state(false);
 	let abortController: AbortController | null = null;
+	let lastAuthSignedIn: boolean | null = null;
 
 	async function loadRecommended(pageToken?: string) {
 		if (!pageToken) {
@@ -92,6 +94,18 @@
 	function handleSearchClick(query: string) {
 		goto(`/results?q=${encodeURIComponent(query)}`);
 	}
+
+	// Reload recommended when auth state changes (sign-in / sign-out)
+	$effect(() => {
+		const isSignedIn = $authState.isSignedIn;
+		const isLoading = $authLoading;
+		if (isLoading) return;
+
+		if (lastAuthSignedIn !== null && lastAuthSignedIn !== isSignedIn) {
+			loadRecommended();
+		}
+		lastAuthSignedIn = isSignedIn;
+	});
 
 	beforeNavigate(() => {
 		if (abortController) abortController.abort();

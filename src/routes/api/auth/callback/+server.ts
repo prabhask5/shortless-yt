@@ -1,6 +1,11 @@
 import { redirect, isRedirect } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { consumePkceState, exchangeCode, getUserProfile, createSession } from '$lib/server/auth';
+import {
+	consumePkceState,
+	exchangeCode,
+	getUserProfile,
+	createSessionCookie
+} from '$lib/server/auth';
 import { logAuthEvent } from '$lib/server/logger';
 import { checkRateLimit } from '$lib/server/rate-limiter';
 
@@ -40,14 +45,14 @@ export const GET: RequestHandler = async ({ url, cookies, getClientAddress }) =>
 	try {
 		const tokens = await exchangeCode(code, codeVerifier);
 		const user = await getUserProfile(tokens.accessToken);
-		const sessionId = createSession(
+		const sessionCookie = await createSessionCookie(
 			tokens.accessToken,
 			tokens.refreshToken,
 			tokens.expiresIn,
 			user
 		);
 
-		cookies.set('session_id', sessionId, {
+		cookies.set('session_id', sessionCookie, {
 			path: '/',
 			httpOnly: true,
 			secure: false,

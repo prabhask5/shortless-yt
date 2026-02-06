@@ -8,6 +8,7 @@
 	import BottomNav from '$lib/components/BottomNav.svelte';
 	import OfflineBanner from '$lib/components/OfflineBanner.svelte';
 	import InstallBanner from '$lib/components/InstallBanner.svelte';
+	import UpdateToast from '$lib/components/UpdateToast.svelte';
 
 	interface Props {
 		children: import('svelte').Snippet;
@@ -43,6 +44,7 @@
 	<BottomNav />
 	<OfflineBanner />
 	<InstallBanner />
+	<UpdateToast />
 </div>
 
 <style>

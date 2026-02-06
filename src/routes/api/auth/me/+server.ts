@@ -10,14 +10,15 @@ export const GET: RequestHandler = async ({ cookies, getClientAddress }) => {
 		return json({ error: 'Rate limit exceeded' }, { status: 429 });
 	}
 
-	const sessionId = cookies.get('session_id');
-	if (!sessionId) {
+	const sessionCookie = cookies.get('session_id');
+	if (!sessionCookie) {
 		return json({ isSignedIn: false, user: null });
 	}
 
-	const session = await getValidSession(sessionId);
+	const session = await getValidSession(sessionCookie, cookies);
 	if (!session) {
-		cookies.delete('session_id', { path: '/' });
+		// Don't delete cookie — might be a transient failure (server restart)
+		// The cookie is harmless if invalid and avoids forcing re-login unnecessarily
 		return json({ isSignedIn: false, user: null });
 	}
 

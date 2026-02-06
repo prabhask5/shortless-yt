@@ -15,9 +15,9 @@ export const GET: RequestHandler = async ({ url, cookies, getClientAddress }) =>
 	const offset = parseInt(url.searchParams.get('offset') || '0', 10);
 
 	try {
-		const sessionId = cookies.get('session_id');
-		if (sessionId) {
-			const session = await getValidSession(sessionId);
+		const sessionCookie = cookies.get('session_id');
+		if (sessionCookie) {
+			const session = await getValidSession(sessionCookie, cookies);
 			if (session) {
 				const result = await getSubscriptionFeed(
 					session.accessToken,
