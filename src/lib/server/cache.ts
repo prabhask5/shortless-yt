@@ -9,7 +9,13 @@ const DEFAULT_TTLS = {
 	related: 10 * 60 * 1000, // 10 minutes
 	shortCheck: 7 * 24 * 60 * 60 * 1000, // 7 days
 	trending: 30 * 60 * 1000, // 30 minutes
-	subscriptions: 60 * 60 * 1000 // 1 hour
+	subscriptions: 60 * 60 * 1000, // 1 hour
+	channel: 24 * 60 * 60 * 1000, // 24 hours
+	channelThumbnail: 24 * 60 * 60 * 1000, // 24 hours
+	channelVideos: 30 * 60 * 1000, // 30 minutes
+	playlist: 60 * 60 * 1000, // 1 hour
+	playlistVideos: 30 * 60 * 1000, // 30 minutes
+	subscriptionCheck: 60 * 60 * 1000 // 1 hour
 } as const;
 
 const MAX_CACHE_SIZE = 5000;

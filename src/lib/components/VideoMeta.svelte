@@ -15,11 +15,26 @@
 	<div class="meta-bar">
 		<div class="meta-info">
 			<div class="channel-row">
-				<div class="channel-avatar">
-					{video.channelTitle.charAt(0).toUpperCase()}
-				</div>
+				<a href="/channel/{video.channelId}" class="channel-avatar-link">
+					{#if video.channelThumbnail}
+						<img
+							src={video.channelThumbnail}
+							alt={video.channelTitle}
+							class="channel-avatar-img"
+							loading="lazy"
+							decoding="async"
+							width="40"
+							height="40"
+							referrerpolicy="no-referrer"
+						/>
+					{:else}
+						<div class="channel-avatar">
+							{video.channelTitle.charAt(0).toUpperCase()}
+						</div>
+					{/if}
+				</a>
 				<div class="channel-info">
-					<span class="channel-name">{video.channelTitle}</span>
+					<a href="/channel/{video.channelId}" class="channel-name">{video.channelTitle}</a>
 				</div>
 			</div>
 		</div>
@@ -73,6 +88,18 @@
 		gap: 12px;
 	}
 
+	.channel-avatar-link {
+		flex-shrink: 0;
+		text-decoration: none;
+	}
+
+	.channel-avatar-img {
+		width: 40px;
+		height: 40px;
+		border-radius: 50%;
+		object-fit: cover;
+	}
+
 	.channel-avatar {
 		width: 40px;
 		height: 40px;
@@ -90,6 +117,12 @@
 	.channel-name {
 		font-size: 16px;
 		font-weight: 500;
+		color: var(--text-primary);
+		text-decoration: none;
+	}
+
+	.channel-name:hover {
+		color: var(--text-primary);
 	}
 
 	.meta-actions {

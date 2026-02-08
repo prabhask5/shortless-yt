@@ -58,11 +58,21 @@ export function formatDate(dateString: string): string {
 	});
 }
 
-export function sanitizeText(text: string): string {
+export function formatSubscriberCount(count: string | number): string {
+	const num = typeof count === 'string' ? parseInt(count, 10) : count;
+	if (isNaN(num)) return '0 subscribers';
+	if (num >= 1_000_000_000) return `${(num / 1_000_000_000).toFixed(1)}B subscribers`;
+	if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}M subscribers`;
+	if (num >= 1_000) return `${(num / 1_000).toFixed(1)}K subscribers`;
+	return `${num} subscribers`;
+}
+
+export function decodeEntities(text: string): string {
 	return text
-		.replace(/&/g, '&amp;')
-		.replace(/</g, '&lt;')
-		.replace(/>/g, '&gt;')
-		.replace(/"/g, '&quot;')
-		.replace(/'/g, '&#039;');
+		.replace(/&amp;/g, '&')
+		.replace(/&lt;/g, '<')
+		.replace(/&gt;/g, '>')
+		.replace(/&quot;/g, '"')
+		.replace(/&#0?39;/g, "'")
+		.replace(/&#x27;/g, "'");
 }

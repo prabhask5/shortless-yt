@@ -36,7 +36,7 @@
 			const newVideos: VideoItem[] = data.items;
 
 			if (pageToken) {
-				relatedVideos = [...relatedVideos, ...newVideos];
+				relatedVideos.push(...newVideos);
 			} else {
 				relatedVideos = newVideos;
 			}
@@ -80,7 +80,7 @@
 			for (const v of newVideos) shownIds.add(v.id);
 
 			if (pageToken) {
-				recommendedVideos = [...recommendedVideos, ...newVideos];
+				recommendedVideos.push(...newVideos);
 			} else {
 				recommendedVideos = newVideos;
 			}

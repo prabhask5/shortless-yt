@@ -4,6 +4,7 @@ export interface VideoItem {
 	description: string;
 	channelId: string;
 	channelTitle: string;
+	channelThumbnail?: string;
 	publishedAt: string;
 	thumbnails: {
 		default?: Thumbnail;
@@ -85,4 +86,75 @@ export interface CacheEntry<T> {
 export interface ShortsConfig {
 	maxDurationSeconds: number;
 	keywords: string[];
+}
+
+export interface ChannelInfo {
+	id: string;
+	title: string;
+	description: string;
+	customUrl?: string;
+	publishedAt: string;
+	thumbnails: {
+		default?: Thumbnail;
+		medium?: Thumbnail;
+		high?: Thumbnail;
+	};
+	bannerUrl?: string;
+	subscriberCount: string;
+	videoCount: string;
+	viewCount: string;
+}
+
+export interface PlaylistInfo {
+	id: string;
+	title: string;
+	description: string;
+	channelId: string;
+	channelTitle: string;
+	publishedAt: string;
+	thumbnails: {
+		default?: Thumbnail;
+		medium?: Thumbnail;
+		high?: Thumbnail;
+		maxres?: Thumbnail;
+	};
+	itemCount: number;
+	channelThumbnail?: string;
+}
+
+export interface SubscriptionChannel {
+	channelId: string;
+	title: string;
+	description: string;
+	thumbnailUrl: string;
+	publishedAt: string;
+}
+
+export interface SearchResultItem {
+	kind: 'video' | 'channel' | 'playlist';
+	video?: VideoItem;
+	channel?: {
+		id: string;
+		title: string;
+		description: string;
+		thumbnailUrl: string;
+		subscriberCount?: string;
+		videoCount?: string;
+		customUrl?: string;
+	};
+	playlist?: {
+		id: string;
+		title: string;
+		description: string;
+		thumbnailUrl: string;
+		channelId: string;
+		channelTitle: string;
+		itemCount?: number;
+	};
+}
+
+export interface EnhancedSearchResponse {
+	items: SearchResultItem[];
+	nextPageToken?: string;
+	totalResults: number;
 }

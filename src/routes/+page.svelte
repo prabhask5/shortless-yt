@@ -23,6 +23,7 @@
 	let lastAuthSignedIn: boolean | null = null;
 	let sentinelEl: HTMLDivElement | undefined = $state();
 	let observer: IntersectionObserver | null = null;
+	let lastLoadTime = 0;
 
 	async function loadRecommended(pageToken?: string) {
 		if (!pageToken) {
@@ -31,6 +32,10 @@
 			reachedEnd = false;
 			nextOffset = 0;
 		} else {
+			// Debounce: prevent rapid-fire pagination from IntersectionObserver
+			const now = Date.now();
+			if (now - lastLoadTime < 500) return;
+			lastLoadTime = now;
 			loadingMore = true;
 		}
 		error = '';
@@ -54,7 +59,7 @@
 			const data: SearchResponse = await res.json();
 
 			if (pageToken) {
-				videos = [...videos, ...data.items];
+				videos.push(...data.items);
 			} else {
 				videos = data.items;
 			}
@@ -80,11 +85,11 @@
 		if (!browser || observer) return;
 		observer = new IntersectionObserver(
 			(entries) => {
-				if (entries[0]?.isIntersecting && !loadingMore && nextPageToken) {
+				if (entries[0]?.isIntersecting && !loadingMore && !loading && nextPageToken) {
 					loadRecommended(nextPageToken);
 				}
 			},
-			{ rootMargin: '800px' }
+			{ rootMargin: '400px' }
 		);
 		if (sentinelEl) observer.observe(sentinelEl);
 	}

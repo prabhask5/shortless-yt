@@ -2,6 +2,8 @@
 
 A YouTube web client built with SvelteKit that removes Shorts from all content surfaces. Search, watch, and browse YouTube without any Shorts appearing in your results.
 
+Try it at: [https://youtube.prabhas.io](https://youtube.prabhas.io)
+
 ## Features
 
 - **Search videos** with automatic Shorts filtering and backfill

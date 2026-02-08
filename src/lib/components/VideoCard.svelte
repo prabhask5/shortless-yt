@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import type { VideoItem } from '$lib/types';
 	import { formatViewCount, formatDuration, formatRelativeTime } from '$lib/utils/format';
 
@@ -19,6 +20,13 @@
 	let duration = $derived(formatDuration(video.duration));
 	let views = $derived(formatViewCount(video.viewCount));
 	let age = $derived(formatRelativeTime(video.publishedAt));
+
+	function goToChannel(e: MouseEvent | KeyboardEvent) {
+		if (e instanceof KeyboardEvent && e.key !== 'Enter') return;
+		e.preventDefault();
+		e.stopPropagation();
+		goto(`/channel/${video.channelId}`);
+	}
 </script>
 
 <a href="/watch/{video.id}" class="video-card {layout}" data-sveltekit-preload-data="hover">
@@ -37,12 +45,37 @@
 		{/if}
 	</div>
 	<div class="video-info">
-		<div class="channel-avatar-placeholder">
-			<div class="avatar-circle">{video.channelTitle.charAt(0).toUpperCase()}</div>
-		</div>
+		<span
+			class="channel-avatar-placeholder"
+			role="link"
+			tabindex="0"
+			onclick={goToChannel}
+			onkeydown={goToChannel}
+		>
+			{#if video.channelThumbnail}
+				<img
+					src={video.channelThumbnail}
+					alt={video.channelTitle}
+					class="avatar-img"
+					loading="lazy"
+					decoding="async"
+					width="36"
+					height="36"
+					referrerpolicy="no-referrer"
+				/>
+			{:else}
+				<div class="avatar-circle">{video.channelTitle.charAt(0).toUpperCase()}</div>
+			{/if}
+		</span>
 		<div class="video-details">
 			<h3 class="video-title line-clamp-2">{video.title}</h3>
-			<div class="channel-name">{video.channelTitle}</div>
+			<span
+				class="channel-name"
+				role="link"
+				tabindex="0"
+				onclick={goToChannel}
+				onkeydown={goToChannel}>{video.channelTitle}</span
+			>
 			<div class="video-meta">
 				<span>{views}</span>
 				<span class="meta-dot">&middot;</span>
@@ -60,8 +93,7 @@
 		border-radius: 12px;
 		transition: background-color 0.15s;
 		cursor: pointer;
-		content-visibility: auto;
-		contain-intrinsic-size: auto 300px;
+		contain: layout style;
 	}
 
 	.video-card:hover {
@@ -104,6 +136,14 @@
 
 	.channel-avatar-placeholder {
 		flex-shrink: 0;
+		cursor: pointer;
+	}
+
+	.avatar-img {
+		width: 36px;
+		height: 36px;
+		border-radius: 50%;
+		object-fit: cover;
 	}
 
 	.avatar-circle {

@@ -3,45 +3,89 @@
 	import { onMount } from 'svelte';
 
 	let show = $state(false);
-	let waitingWorker: ServiceWorker | null = null;
+	let reloading = false;
 
 	onMount(() => {
-		if (!browser || !('serviceWorker' in navigator)) return;
+		if (!browser || !navigator.serviceWorker) return;
 
-		navigator.serviceWorker.getRegistration().then((reg) => {
-			if (!reg) return;
+		// Check for a waiting worker
+		function checkForWaitingWorker() {
+			navigator.serviceWorker.getRegistration().then((registration) => {
+				if (registration?.waiting) {
+					show = true;
+				}
+			});
+		}
 
-			// If there's already a waiting worker (e.g. user navigated back)
-			if (reg.waiting) {
-				waitingWorker = reg.waiting;
+		// Check immediately
+		checkForWaitingWorker();
+
+		// Delayed checks (iOS PWA sometimes needs extra time)
+		setTimeout(checkForWaitingWorker, 1000);
+		setTimeout(checkForWaitingWorker, 3000);
+
+		// Listen for SW_INSTALLED message from the service worker
+		navigator.serviceWorker.addEventListener('message', (event) => {
+			if (event.data?.type === 'SW_INSTALLED') {
+				setTimeout(checkForWaitingWorker, 500);
+			}
+		});
+
+		// Listen for new service worker becoming available
+		navigator.serviceWorker.ready.then((registration) => {
+			if (registration.waiting) {
 				show = true;
-				return;
 			}
 
-			// Listen for new installs
-			reg.addEventListener('updatefound', () => {
-				const newWorker = reg.installing;
+			registration.addEventListener('updatefound', () => {
+				const newWorker = registration.installing;
 				if (!newWorker) return;
 
 				newWorker.addEventListener('statechange', () => {
 					if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-						waitingWorker = newWorker;
 						show = true;
 					}
 				});
 			});
 		});
+
+		// Check for updates when app becomes visible (critical for mobile/PWA)
+		document.addEventListener('visibilitychange', () => {
+			if (document.visibilityState === 'visible') {
+				navigator.serviceWorker.ready.then((reg) => reg.update());
+				setTimeout(checkForWaitingWorker, 1000);
+			}
+		});
+
+		// Periodic update checks (every 2 minutes)
+		setInterval(
+			() => {
+				navigator.serviceWorker.ready.then((reg) => reg.update());
+			},
+			2 * 60 * 1000
+		);
+
+		// Force an update check on page load
+		navigator.serviceWorker.ready.then((reg) => reg.update());
 	});
 
 	function reload() {
-		if (waitingWorker) {
-			waitingWorker.postMessage({ type: 'SKIP_WAITING' });
-		}
-		if (browser) {
-			navigator.serviceWorker.addEventListener('controllerchange', () => {
+		if (reloading) return;
+		reloading = true;
+		show = false;
+
+		navigator.serviceWorker.getRegistration().then((registration) => {
+			if (registration?.waiting) {
+				navigator.serviceWorker.addEventListener(
+					'controllerchange',
+					() => window.location.reload(),
+					{ once: true }
+				);
+				registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+			} else {
 				window.location.reload();
-			});
-		}
+			}
+		});
 	}
 
 	function dismiss() {

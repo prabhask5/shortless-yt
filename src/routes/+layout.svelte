@@ -20,11 +20,26 @@
 		initTheme();
 		checkAuth();
 
-		// Register service worker
+		// Register service worker (deferred to reduce main-thread work)
 		if ('serviceWorker' in navigator) {
-			navigator.serviceWorker.register('/sw.js').catch(() => {
-				// SW registration failed, app still works
-			});
+			const registerSW = () => {
+				navigator.serviceWorker
+					.register('/sw.js')
+					.then((registration) => {
+						// Check for updates when app becomes visible
+						document.addEventListener('visibilitychange', () => {
+							if (document.visibilityState === 'visible') {
+								registration.update();
+							}
+						});
+					})
+					.catch(() => {});
+			};
+			if ('requestIdleCallback' in window) {
+				requestIdleCallback(registerSW);
+			} else {
+				setTimeout(registerSW, 1);
+			}
 		}
 	});
 </script>

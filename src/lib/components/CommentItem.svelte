@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { CommentThread, Comment } from '$lib/types';
-	import { formatRelativeTime, formatLikeCount, sanitizeText } from '$lib/utils/format';
+	import { formatRelativeTime, formatLikeCount, decodeEntities } from '$lib/utils/format';
 
 	interface Props {
 		thread: CommentThread;
@@ -83,7 +83,7 @@
 				<span class="comment-author">{comment.authorDisplayName}</span>
 				<span class="comment-time">{formatRelativeTime(comment.publishedAt)}</span>
 			</div>
-			<div class="comment-text">{sanitizeText(comment.textOriginal || comment.textDisplay)}</div>
+			<div class="comment-text">{decodeEntities(comment.textOriginal || comment.textDisplay)}</div>
 			<div class="comment-actions">
 				{#if comment.likeCount > 0}
 					<span class="like-count">
@@ -134,7 +134,7 @@
 									<span class="comment-time">{formatRelativeTime(reply.publishedAt)}</span>
 								</div>
 								<div class="comment-text">
-									{sanitizeText(reply.textOriginal || reply.textDisplay)}
+									{decodeEntities(reply.textOriginal || reply.textDisplay)}
 								</div>
 								{#if reply.likeCount > 0}
 									<div class="comment-actions">

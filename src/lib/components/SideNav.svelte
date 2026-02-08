@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 
-	let currentPath = $derived($page.url.pathname);
+	let currentPath: string = $derived($page.url.pathname);
 </script>
 
 <nav class="sidenav" aria-label="Main navigation">
@@ -12,17 +12,17 @@
 		<span class="nav-label">Home</span>
 	</a>
 	<a
-		href="/results?q="
+		href="/subscriptions"
 		class="nav-item"
-		class:active={currentPath === '/results'}
-		aria-label="Explore"
+		class:active={currentPath === '/subscriptions'}
+		aria-label="Subscriptions"
 	>
 		<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
 			<path
-				d="M12 10.9c-.61 0-1.1.49-1.1 1.1s.49 1.1 1.1 1.1c.61 0 1.1-.49 1.1-1.1s-.49-1.1-1.1-1.1zM12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm2.19 12.19L6 18l3.81-8.19L18 6l-3.81 8.19z"
+				d="M4 6h16v2H4zm2-4h12v2H6zm14 8H4c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2v-8c0-1.1-.9-2-2-2zm0 10H4v-8h16v8zm-10-7.27v6.53L16 16l-6-3.27z"
 			/>
 		</svg>
-		<span class="nav-label">Explore</span>
+		<span class="nav-label">Subscriptions</span>
 	</a>
 	<a
 		href="/settings"
