@@ -1,21 +1,48 @@
 <script lang="ts">
+	/**
+	 * CommentList.svelte
+	 *
+	 * Fetches and renders the comment section for a given video.
+	 * Features:
+	 *   - Sort toggle between "Top" (relevance) and "Newest" (time)
+	 *   - Paginated loading via "Load more comments" button
+	 *   - Handles disabled-comments and error states gracefully
+	 *
+	 * Each comment thread (top-level comment + replies) is rendered by
+	 * the CommentItem child component.
+	 */
+
 	import type { CommentsResponse } from '$lib/types';
 	import CommentItem from './CommentItem.svelte';
 	import LoadingSkeletons from './LoadingSkeletons.svelte';
 
 	interface Props {
+		/** The YouTube video ID whose comments to fetch */
 		videoId: string;
 	}
 
+	/** Destructure props with Svelte 5 $props() rune */
 	let { videoId }: Props = $props();
 
+	/** $state rune: holds the current comments response (items + pagination token + totalResults) */
 	let comments: CommentsResponse | null = $state(null);
+	/** $state rune: true during the initial comment load (shows skeleton placeholders) */
 	let loading = $state(true);
+	/** $state rune: true while fetching the next page of comments (disables "Load more" button) */
 	let loadingMore = $state(false);
+	/** $state rune: error message string; empty when no error */
 	let error = $state('');
+	/** $state rune: current sort order for comments -- 'top' (relevance) or 'newest' (chronological) */
 	let sortOrder = $state<'top' | 'newest'>('top');
 
+	/**
+	 * Fetches comments from the server API endpoint.
+	 * When `pageToken` is provided, appends results to existing comments (pagination).
+	 * When omitted, replaces all comments (initial load or sort change).
+	 * @param pageToken - Optional YouTube API page token for fetching the next page
+	 */
 	async function loadComments(pageToken?: string) {
+		// Distinguish between initial load (full skeleton) and pagination (inline spinner)
 		if (pageToken) {
 			loadingMore = true;
 		} else {
@@ -35,11 +62,13 @@
 			}
 
 			if (pageToken && comments) {
+				// Pagination: merge new items with existing ones, keeping updated metadata
 				comments = {
 					...data,
 					items: [...comments.items, ...data.items]
 				};
 			} else {
+				// Fresh load: replace everything
 				comments = data;
 			}
 		} catch (err) {
@@ -50,19 +79,32 @@
 		}
 	}
 
+	/**
+	 * Handles sort order toggle. Resets comments to null (triggers skeleton)
+	 * and re-fetches from the first page with the new sort order.
+	 * @param order - The new sort order ('top' or 'newest')
+	 */
 	function handleSort(order: 'top' | 'newest') {
 		sortOrder = order;
 		comments = null;
 		loadComments();
 	}
 
+	/**
+	 * Loads the next page of comments if a pagination token exists.
+	 * Called by the "Load more comments" button.
+	 */
 	function loadMore() {
 		if (comments?.nextPageToken) {
 			loadComments(comments.nextPageToken);
 		}
 	}
 
-	// Initial load
+	/**
+	 * $effect rune: triggers on initial mount and whenever `videoId` changes
+	 * (e.g. navigating from one watch page to another). Resets state and
+	 * fetches comments for the new video.
+	 */
 	$effect(() => {
 		if (videoId) {
 			comments = null;
@@ -71,8 +113,10 @@
 	});
 </script>
 
+<!-- Comments section rendered below the video metadata on the watch page -->
 <div class="comments-section">
 	<div class="comments-header">
+		<!-- Show total comment count once loaded, otherwise just "Comments" -->
 		<h3 class="comments-title">
 			{#if comments}
 				{comments.totalResults.toLocaleString()} Comments
@@ -80,6 +124,7 @@
 				Comments
 			{/if}
 		</h3>
+		<!-- Sort toggle: class:active highlights the currently selected sort order -->
 		<div class="sort-buttons">
 			<button class="sort-btn" class:active={sortOrder === 'top'} onclick={() => handleSort('top')}>
 				Top
@@ -94,6 +139,7 @@
 		</div>
 	</div>
 
+	<!-- State-based rendering: loading skeletons -> error -> comments disabled -> comment threads -->
 	{#if loading}
 		<LoadingSkeletons count={5} layout="comments" />
 	{:else if error}
@@ -101,12 +147,14 @@
 	{:else if comments?.commentsDisabled}
 		<div class="comments-disabled">Comments are turned off for this video.</div>
 	{:else if comments}
+		<!-- Each thread is keyed by thread.id for efficient list diffing -->
 		<div class="comments-list">
 			{#each comments.items as thread (thread.id)}
 				<CommentItem {thread} />
 			{/each}
 		</div>
 
+		<!-- "Load more" button only appears when there's a next page token from the API -->
 		{#if comments.nextPageToken}
 			<button class="load-more-btn btn btn-secondary" onclick={loadMore} disabled={loadingMore}>
 				{loadingMore ? 'Loading...' : 'Load more comments'}

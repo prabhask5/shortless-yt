@@ -1,3 +1,24 @@
+<!--
+  Privacy Policy Page (/privacy/+page.svelte)
+
+  Static legal page displaying the Shortless privacy policy. Covers:
+  - Overview of what Shortless is and how it handles data
+  - Information collected: Google account data (profile, YouTube subscriptions) and
+    automatically collected data (search history in localStorage, theme preference)
+  - How data is used: subscriptions for recommendations, profile for display only
+  - Data storage: HTTP-only HMAC-signed session cookies, no server-side database,
+    browser localStorage for preferences
+  - Third-party services: Google OAuth 2.0, YouTube Data API v3
+  - Data sharing policy (none)
+  - Data retention and deletion: 7-day cookie expiry, sign-out clears session,
+    instructions for revoking Google access
+  - Google API Services User Data Policy compliance (Limited Use requirements)
+  - Children's privacy (not intended for under 13)
+  - Contact information (GitHub issues)
+
+  This page has no script block — it is purely static HTML with scoped styles.
+  No data fetching or reactive state is needed.
+-->
 <svelte:head>
 	<title>Privacy Policy - Shortless Youtube</title>
 </svelte:head>

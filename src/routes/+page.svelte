@@ -1,4 +1,21 @@
 <script lang="ts">
+	/**
+	 * Home Page (+page.svelte)
+	 *
+	 * The main landing page of Shortless. Displays:
+	 * - Recent search history chips (from localStorage via searchHistory store)
+	 * - A grid of recommended/trending videos fetched from /api/recommended
+	 * - Infinite scroll pagination to load more videos as the user scrolls down
+	 * - Auth error banner if Google sign-in redirect returned an error
+	 * - An empty state message when no videos are available
+	 * - Footer links to About, Privacy Policy, and Terms of Service
+	 *
+	 * Data flow:
+	 *   onMount -> loadRecommended() fetches first page from /api/recommended
+	 *   IntersectionObserver on sentinelEl -> triggers loadRecommended(nextPageToken) for pagination
+	 *   Auth state change ($effect) -> reloads recommendations (signed-in users get personalized feed)
+	 *   Pagination uses .push() for efficient Svelte 5 proxy mutation detection
+	 */
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { beforeNavigate } from '$app/navigation';
@@ -10,29 +27,73 @@
 	import VideoGrid from '$lib/components/VideoGrid.svelte';
 	import ErrorBanner from '$lib/components/ErrorBanner.svelte';
 
+	/**
+	 * $derived rune: Reactively extracts the 'auth_error' query parameter from the current URL.
+	 * This is set when the Google OAuth redirect fails (e.g., user denied permission).
+	 */
 	let authError = $derived($page.url.searchParams.get('auth_error'));
 
+	/** $state rune: The list of recommended video items currently loaded and displayed */
 	let videos = $state<VideoItem[]>([]);
+	/** $state rune: Whether the initial page load is in progress (shows skeleton loaders) */
 	let loading = $state(true);
+	/** $state rune: Whether a subsequent pagination request is in progress */
 	let loadingMore = $state(false);
+	/** $state rune: Error message to display in the ErrorBanner, empty string means no error */
 	let error = $state('');
+	/** $state rune: YouTube API pagination token for the next page of results */
 	let nextPageToken = $state<string | undefined>();
+	/**
+	 * $state rune: Offset counter for server-side subscription channel rotation.
+	 * Incremented by 4 per page so the server picks different subscription channels each time.
+	 */
 	let nextOffset = $state(0);
+	/** $state rune: Whether all available results have been exhausted (no more pages) */
 	let reachedEnd = $state(false);
+	/** AbortController for cancelling in-flight fetch requests on navigation or fresh reload */
 	let abortController: AbortController | null = null;
+	/** Tracks the previous auth sign-in state to detect sign-in/sign-out transitions */
 	let lastAuthSignedIn: boolean | null = null;
+	/**
+	 * $state rune: Bound reference to the invisible sentinel <div> at the bottom of the video grid.
+	 * The IntersectionObserver watches this element to trigger infinite scroll pagination.
+	 */
 	let sentinelEl: HTMLDivElement | undefined = $state();
+	/** IntersectionObserver instance for infinite scroll; cleaned up on unmount */
 	let observer: IntersectionObserver | null = null;
+	/** Timestamp of the last pagination load, used for 500ms debounce */
 	let lastLoadTime = 0;
 
+	/**
+	 * Fetches recommended videos from the /api/recommended endpoint.
+	 * Handles both initial loads (no pageToken) and paginated loads.
+	 *
+	 * @param pageToken - YouTube API page token for fetching the next page.
+	 *                    If omitted, performs a fresh load (resets all state).
+	 *
+	 * Fresh load behavior:
+	 *   - Aborts any in-flight request to avoid stale data
+	 *   - Resets videos array, pagination state, and offset
+	 *
+	 * Pagination behavior:
+	 *   - Enforces 500ms debounce to prevent IntersectionObserver rapid-fire
+	 *   - Appends new items via .push() (Svelte 5 proxy detects mutations efficiently)
+	 *   - Increments offset by 4 for server-side subscription channel rotation
+	 */
 	async function loadRecommended(pageToken?: string) {
 		if (!pageToken) {
+			// Only abort on fresh loads, not pagination — prevents race condition
+			// where aborting a pagination request resets state and triggers observer loop
+			if (abortController) abortController.abort();
+			abortController = new AbortController();
 			loading = true;
 			videos = [];
 			reachedEnd = false;
 			nextOffset = 0;
+			nextPageToken = undefined;
 		} else {
-			// Debounce: prevent rapid-fire pagination from IntersectionObserver
+			// Debounce: prevent rapid-fire pagination from IntersectionObserver.
+			// The observer can fire multiple times in quick succession as content reflows.
 			const now = Date.now();
 			if (now - lastLoadTime < 500) return;
 			lastLoadTime = now;
@@ -40,16 +101,14 @@
 		}
 		error = '';
 
-		if (abortController) abortController.abort();
-		abortController = new AbortController();
-
 		try {
 			const params = new URLSearchParams();
 			if (pageToken) params.set('pageToken', pageToken);
+			// Offset tells the server which subset of subscription channels to query for variety
 			if (nextOffset > 0) params.set('offset', String(nextOffset));
 
 			const res = await fetch(`/api/recommended?${params}`, {
-				signal: abortController.signal
+				signal: abortController?.signal
 			});
 			if (!res.ok) {
 				const data = await res.json();
@@ -59,33 +118,56 @@
 			const data: SearchResponse = await res.json();
 
 			if (pageToken) {
+				// Pagination: append to existing array using .push() for efficient Svelte 5 reactivity
 				videos.push(...data.items);
 			} else {
+				// Fresh load: replace the entire array
 				videos = data.items;
 			}
 
 			nextPageToken = data.nextPageToken;
 			if (data.nextPageToken) {
+				// Advance offset so the next page queries different subscription channels
 				nextOffset += 4;
 			}
 
 			if (!data.nextPageToken) {
+				// No more pages available from the API
 				reachedEnd = true;
 			}
 		} catch (err) {
+			// Silently ignore AbortError (happens on intentional navigation/reload cancellation)
 			if (err instanceof DOMException && err.name === 'AbortError') return;
 			error = err instanceof Error ? err.message : 'Failed to load';
+			nextPageToken = undefined;
 		} finally {
 			loading = false;
 			loadingMore = false;
 		}
 	}
 
+	/**
+	 * Creates an IntersectionObserver that watches the sentinel element at the bottom
+	 * of the video grid. When the sentinel enters the viewport (with 400px rootMargin
+	 * for preloading), it triggers the next page load.
+	 *
+	 * Guards prevent duplicate triggers:
+	 *   - !loadingMore: not already fetching the next page
+	 *   - !loading: not performing an initial load
+	 *   - !reachedEnd: more pages are available
+	 *   - nextPageToken: a valid token exists for the next request
+	 */
 	function setupObserver() {
 		if (!browser || observer) return;
 		observer = new IntersectionObserver(
 			(entries) => {
-				if (entries[0]?.isIntersecting && !loadingMore && !loading && nextPageToken) {
+				if (
+					entries[0]?.isIntersecting &&
+					!loadingMore &&
+					!loading &&
+					!reachedEnd &&
+					nextPageToken
+				) {
 					loadRecommended(nextPageToken);
 				}
 			},
@@ -94,11 +176,20 @@
 		if (sentinelEl) observer.observe(sentinelEl);
 	}
 
+	/**
+	 * Navigates to the search results page when a recent search chip is clicked.
+	 * @param query - The search query string to use
+	 */
 	function handleSearchClick(query: string) {
 		goto(`/results?q=${encodeURIComponent(query)}`);
 	}
 
-	// Reload recommended when auth state changes (sign-in / sign-out)
+	/**
+	 * $effect rune: Watches auth state changes (sign-in / sign-out transitions).
+	 * When the user's signed-in status changes (and auth is no longer loading),
+	 * reloads recommendations so the feed switches between personalized and trending.
+	 * Uses lastAuthSignedIn to avoid triggering on the initial load.
+	 */
 	$effect(() => {
 		const isSignedIn = $authState.isSignedIn;
 		const isLoading = $authLoading;
@@ -110,12 +201,22 @@
 		lastAuthSignedIn = isSignedIn;
 	});
 
+	/**
+	 * Lifecycle: Abort any in-flight requests when navigating away from the home page.
+	 * Resets loading states to prevent stale UI if the user returns.
+	 */
 	beforeNavigate(() => {
 		if (abortController) abortController.abort();
 		loading = false;
 		loadingMore = false;
 	});
 
+	/**
+	 * $effect rune: Sets up the IntersectionObserver when the sentinel element is bound.
+	 * The sentinel <div> is placed after the VideoGrid in the template. Once bound via
+	 * bind:this, this effect attaches the observer. The returned cleanup function disconnects
+	 * the observer when the component unmounts or the sentinel is removed.
+	 */
 	$effect(() => {
 		if (sentinelEl && browser) {
 			setupObserver();
@@ -126,6 +227,10 @@
 		}
 	});
 
+	/**
+	 * Lifecycle: Triggers the initial data load on mount.
+	 * Returns a cleanup function that aborts any in-flight requests on unmount.
+	 */
 	onMount(() => {
 		loadRecommended();
 		return () => {

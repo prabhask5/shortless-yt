@@ -1,29 +1,68 @@
 <script lang="ts">
+	/**
+	 * PremiumHelpModal.svelte
+	 *
+	 * An informational modal dialog that explains why YouTube Premium ad-free
+	 * playback may not work within the app's embedded player. Since the app uses
+	 * YouTube's iframe embed API, third-party cookie restrictions in modern browsers
+	 * can prevent the embedded player from recognizing the user's Premium session.
+	 *
+	 * The modal provides:
+	 *   - An explanation of the third-party cookie issue
+	 *   - Actionable troubleshooting steps for the user
+	 *   - A direct link to open the video on youtube.com as a fallback
+	 *
+	 * Supports closing via the X button, the "Close" footer button, clicking
+	 * the backdrop overlay, or pressing the Escape key.
+	 */
+
 	interface Props {
+		/** The YouTube video ID, used to construct the "Open on YouTube" link. */
 		videoId: string;
+		/** Whether the modal is currently visible. Controlled by the parent component. */
 		show: boolean;
+		/** Callback to close the modal. Invoked by all close/dismiss interactions. */
 		onClose: () => void;
 	}
 
+	/**
+	 * Destructured component props via Svelte 5 $props() rune.
+	 * All three props are required for the modal to function correctly.
+	 */
 	let { videoId, show, onClose }: Props = $props();
 
+	/**
+	 * Handles clicks on the semi-transparent backdrop overlay. Only closes the
+	 * modal if the click target is the backdrop itself (not a child element
+	 * inside the modal), preventing accidental closes when interacting with
+	 * modal content.
+	 * @param e - The mouse click event
+	 */
 	function handleBackdropClick(e: MouseEvent) {
 		if ((e.target as HTMLElement).classList.contains('modal-backdrop')) {
 			onClose();
 		}
 	}
 
+	/**
+	 * Global keyboard event handler bound via `<svelte:window>`. Allows the
+	 * user to close the modal by pressing the Escape key.
+	 * @param e - The keyboard event
+	 */
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape') onClose();
 	}
 </script>
 
+<!-- Global Escape key listener for closing the modal from anywhere -->
 <svelte:window onkeydown={handleKeydown} />
 
 {#if show}
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<!-- Backdrop click handler only fires when clicking the overlay itself, not modal content -->
 	<div class="modal-backdrop" onclick={handleBackdropClick}>
+		<!-- safe-bottom class adds padding for iOS safe area (notch/home indicator) -->
 		<div class="modal safe-bottom" role="dialog" aria-modal="true" aria-label="Premium help">
 			<div class="modal-header">
 				<h2 class="modal-title">Premium not applying?</h2>
@@ -76,7 +115,9 @@
 				</div>
 			</div>
 
+			<!-- Footer actions: external YouTube link as fallback, plus a close button -->
 			<div class="modal-footer">
+				<!-- Opens the video directly on youtube.com where Premium should work natively -->
 				<a
 					href="https://www.youtube.com/watch?v={videoId}"
 					target="_blank"

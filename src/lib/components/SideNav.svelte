@@ -1,6 +1,20 @@
 <script lang="ts">
+	/**
+	 * SideNav.svelte
+	 *
+	 * Desktop-only side navigation bar, fixed to the left side of the viewport
+	 * below the TopBar. Renders icon+label links for Home, Subscriptions, and Settings.
+	 * Highlights the active route using Svelte's `class:active` directive.
+	 * Hidden on mobile (<=768px) where BottomNav takes over.
+	 */
+
 	import { page } from '$app/stores';
 
+	/**
+	 * @derived Reactively tracks the current page pathname from the SvelteKit page store.
+	 * Used to conditionally apply the `active` CSS class to the matching nav link,
+	 * so the highlight updates automatically on navigation without manual bookkeeping.
+	 */
 	let currentPath: string = $derived($page.url.pathname);
 </script>
 

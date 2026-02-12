@@ -1,11 +1,31 @@
 <script lang="ts">
+	/**
+	 * LoadingSkeletons.svelte
+	 *
+	 * Renders animated placeholder skeletons while content is loading. Supports
+	 * four layout variants to match different content types throughout the app:
+	 *   - 'grid': Video card grid placeholders (thumbnail + avatar + text lines)
+	 *   - 'list': Horizontal list items for search results (large thumbnail + text)
+	 *   - 'compact': Small horizontal items for related/sidebar videos
+	 *   - 'comments': Comment thread placeholders (avatar + text lines)
+	 *
+	 * Each skeleton element uses the `.skeleton` CSS class (defined globally in
+	 * app.css) which provides a shimmer/pulse animation to indicate loading state.
+	 */
+
 	interface Props {
+		/** Number of skeleton placeholder items to render (default: 4) */
 		count?: number;
+		/** Layout variant controlling the shape and arrangement of skeletons */
 		layout?: 'grid' | 'list' | 'compact' | 'comments';
 	}
 
 	let { count = 4, layout = 'grid' }: Props = $props();
 
+	/**
+	 * @derived Creates an array of indices [0, 1, ..., count-1] used to iterate
+	 * and render the correct number of skeleton items. Recomputes if `count` changes.
+	 */
 	let items = $derived(Array.from({ length: count }, (_, i) => i));
 </script>
 

@@ -1,4 +1,22 @@
 <script lang="ts">
+	/**
+	 * Channel Page (/channel/[id]/+page.svelte)
+	 *
+	 * Displays a YouTube channel's profile and video uploads. Features:
+	 * - Channel banner image, avatar, title, handle, subscriber count, and video count
+	 * - Truncated channel description (first 200 chars)
+	 * - Sort tabs: Latest (by date) or Popular (by view count)
+	 * - Infinite scroll grid of the channel's uploaded videos
+	 * - "Subscribed" badge if the signed-in user is subscribed to this channel
+	 *
+	 * Data flow:
+	 *   Route param [id] -> $derived(channelId) -> $effect triggers three parallel loads:
+	 *     1. loadChannel() -> /api/channel?id=<id> -> populates channel metadata
+	 *     2. loadVideos() -> /api/channel/videos?id=<id>&order=<sort> -> populates videos[]
+	 *     3. checkSubStatus() -> /api/subscriptions/check?channelId=<id> -> sets isSubscribed
+	 *   IntersectionObserver on sentinelEl -> triggers loadVideos(nextPageToken) for pagination
+	 *   Sort change -> resets videos and re-fetches with new order parameter
+	 */
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
@@ -8,20 +26,40 @@
 	import VideoGrid from '$lib/components/VideoGrid.svelte';
 	import ErrorBanner from '$lib/components/ErrorBanner.svelte';
 
+	/**
+	 * $derived rune: Reactively extracts the channel ID from the route parameter.
+	 * Updates when navigating between different channel pages.
+	 */
 	let channelId = $derived($page.params.id || '');
+	/** $state rune: Channel metadata (title, description, thumbnails, stats), null until loaded */
 	let channel = $state<ChannelInfo | null>(null);
+	/** $state rune: List of the channel's uploaded videos, paginated */
 	let videos = $state<VideoItem[]>([]);
+	/** $state rune: Whether the initial page load is in progress */
 	let loading = $state(true);
+	/** $state rune: Whether a pagination request for more videos is in progress */
 	let loadingMore = $state(false);
+	/** $state rune: Error message from a failed fetch, empty string means no error */
 	let error = $state('');
+	/** $state rune: YouTube API pagination token for the next page of channel videos */
 	let nextPageToken = $state<string | undefined>();
+	/** $state rune: Whether all channel videos have been loaded (no more pages) */
 	let reachedEnd = $state(false);
+	/** $state rune: Current sort order for channel videos — 'date' (newest) or 'viewCount' (most popular) */
 	let sortOrder = $state<'date' | 'viewCount'>('date');
+	/** $state rune: Whether the signed-in user is subscribed to this channel */
 	let isSubscribed = $state(false);
+	/** $state rune: Bound reference to the sentinel <div> for infinite scroll */
 	let sentinelEl: HTMLDivElement | undefined = $state();
+	/** IntersectionObserver instance for infinite scroll; cleaned up on unmount */
 	let observer: IntersectionObserver | null = null;
+	/** Timestamp of the last pagination load, used for 500ms debounce */
 	let lastLoadTime = 0;
 
+	/**
+	 * Fetches channel metadata (title, description, thumbnails, subscriber count, etc.)
+	 * from the /api/channel endpoint.
+	 */
 	async function loadChannel() {
 		loading = true;
 		error = '';
@@ -37,11 +75,20 @@
 		}
 	}
 
+	/**
+	 * Fetches the channel's video uploads from /api/channel/videos.
+	 * Supports pagination and sort ordering.
+	 *
+	 * @param pageToken - YouTube API page token for fetching the next page.
+	 *                    If omitted, performs a fresh load (resets videos array).
+	 */
 	async function loadVideos(pageToken?: string) {
 		if (!pageToken) {
+			// Fresh load: reset video list and pagination state
 			videos = [];
 			reachedEnd = false;
 		} else {
+			// Pagination: enforce 500ms debounce against IntersectionObserver rapid-fire
 			const now = Date.now();
 			if (now - lastLoadTime < 500) return;
 			lastLoadTime = now;
@@ -58,6 +105,7 @@
 			const data: SearchResponse = await res.json();
 
 			if (pageToken) {
+				// Pagination: append via .push() for efficient Svelte 5 proxy reactivity
 				videos.push(...data.items);
 			} else {
 				videos = data.items;
@@ -67,12 +115,18 @@
 			if (!data.nextPageToken) reachedEnd = true;
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to load videos';
+			nextPageToken = undefined;
 		} finally {
 			loading = false;
 			loadingMore = false;
 		}
 	}
 
+	/**
+	 * Checks whether the currently signed-in user is subscribed to this channel.
+	 * Only runs if the user is authenticated. Non-critical — failures are silently ignored.
+	 * Sets the isSubscribed flag which controls the "Subscribed" badge display.
+	 */
 	async function checkSubStatus() {
 		if (!$authState.isSignedIn) return;
 		try {
@@ -82,10 +136,16 @@
 				isSubscribed = data.isSubscribed;
 			}
 		} catch {
-			// Non-critical
+			// Non-critical: subscription status is informational only
 		}
 	}
 
+	/**
+	 * Switches the video sort order and re-fetches the video list from scratch.
+	 * No-ops if the requested order is already active.
+	 *
+	 * @param order - The sort order to switch to ('date' or 'viewCount')
+	 */
 	function changeSort(order: 'date' | 'viewCount') {
 		if (sortOrder === order) return;
 		sortOrder = order;
@@ -93,11 +153,22 @@
 		loadVideos();
 	}
 
+	/**
+	 * Creates an IntersectionObserver on the sentinel element for infinite scroll.
+	 * Uses 400px rootMargin to preload before the user reaches the bottom.
+	 * Guards prevent duplicate requests during active loads.
+	 */
 	function setupObserver() {
 		if (!browser || observer) return;
 		observer = new IntersectionObserver(
 			(entries) => {
-				if (entries[0]?.isIntersecting && !loadingMore && !loading && nextPageToken) {
+				if (
+					entries[0]?.isIntersecting &&
+					!loadingMore &&
+					!loading &&
+					!reachedEnd &&
+					nextPageToken
+				) {
 					loadVideos(nextPageToken);
 				}
 			},
@@ -106,6 +177,10 @@
 		if (sentinelEl) observer.observe(sentinelEl);
 	}
 
+	/**
+	 * $effect rune: Watches the derived channelId. When navigating to a different channel,
+	 * triggers parallel loads for channel metadata, video uploads, and subscription status.
+	 */
 	$effect(() => {
 		if (channelId) {
 			loadChannel();
@@ -114,6 +189,10 @@
 		}
 	});
 
+	/**
+	 * $effect rune: Attaches the IntersectionObserver once the sentinel element is bound.
+	 * Returns a cleanup function to disconnect the observer on unmount or element removal.
+	 */
 	$effect(() => {
 		if (sentinelEl && browser) {
 			setupObserver();
@@ -124,6 +203,9 @@
 		}
 	});
 
+	/**
+	 * Lifecycle: Cleanup on unmount — disconnects the IntersectionObserver.
+	 */
 	onMount(() => {
 		return () => {
 			observer?.disconnect();

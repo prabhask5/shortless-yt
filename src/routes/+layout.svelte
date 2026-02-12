@@ -1,4 +1,21 @@
 <script lang="ts">
+	/**
+	 * Root Layout (+layout.svelte)
+	 *
+	 * The top-level layout that wraps every page in the Shortless app. Responsible for:
+	 * - Importing global CSS styles (app.css)
+	 * - Initializing theme (light/dark mode) and checking authentication state on mount
+	 * - Registering the service worker for offline support, caching, and PWA functionality
+	 * - Rendering the persistent app shell: TopBar, SideNav (desktop), BottomNav (mobile),
+	 *   and global overlays (OfflineBanner, InstallBanner, UpdateToast)
+	 * - Showing a full-screen loading spinner while auth state is being determined
+	 *
+	 * Data flow:
+	 *   onMount -> initTheme() sets CSS theme class on <html>
+	 *   onMount -> checkAuth() reads session cookie, populates authState store
+	 *   onMount -> registers SW via requestIdleCallback (or setTimeout fallback)
+	 *   $authLoading store -> controls visibility of the full-screen loading overlay
+	 */
 	import '../app.css';
 	import { onMount } from 'svelte';
 	import { checkAuth, authLoading } from '$lib/stores/auth';
@@ -10,23 +27,37 @@
 	import InstallBanner from '$lib/components/InstallBanner.svelte';
 	import UpdateToast from '$lib/components/UpdateToast.svelte';
 
+	/** Props interface: receives child page content as a Svelte 5 snippet */
 	interface Props {
 		children: import('svelte').Snippet;
 	}
 
+	/**
+	 * $props() rune: Destructures the `children` snippet passed by SvelteKit's router.
+	 * This snippet represents the current page component rendered inside the layout.
+	 */
 	let { children }: Props = $props();
 
 	onMount(() => {
+		// Initialize theme from localStorage preference (applies 'dark' or 'light' class to <html>)
 		initTheme();
+		// Check if the user has a valid auth session cookie and populate the authState store
 		checkAuth();
 
-		// Register service worker (deferred to reduce main-thread work)
+		// Register service worker (deferred to reduce main-thread work during initial paint)
 		if ('serviceWorker' in navigator) {
+			/**
+			 * Registers /sw.js which handles:
+			 * - Caching API responses (recommended, search, videos) with TTL-based freshness
+			 * - Caching YouTube thumbnails (i.ytimg.com) in a separate cache
+			 * - Offline fallback for cached content
+			 */
 			const registerSW = () => {
 				navigator.serviceWorker
 					.register('/sw.js')
 					.then((registration) => {
-						// Check for updates when app becomes visible
+						// When the user returns to the tab, check if there is a new SW version available.
+						// This enables the UpdateToast component to prompt for a reload.
 						document.addEventListener('visibilitychange', () => {
 							if (document.visibilityState === 'visible') {
 								registration.update();
@@ -35,6 +66,8 @@
 					})
 					.catch(() => {});
 			};
+			// Defer SW registration until the browser is idle to avoid blocking initial render.
+			// Falls back to setTimeout(fn, 1) for browsers without requestIdleCallback support.
 			if ('requestIdleCallback' in window) {
 				requestIdleCallback(registerSW);
 			} else {

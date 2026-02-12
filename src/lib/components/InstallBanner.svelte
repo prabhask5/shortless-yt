@@ -1,17 +1,41 @@
 <script lang="ts">
+	/**
+	 * InstallBanner.svelte
+	 *
+	 * A fixed bottom banner that prompts iOS Safari users to add the app to their
+	 * home screen (PWA install). This is necessary because iOS does not support the
+	 * standard `beforeinstallprompt` Web API, so we must manually instruct the user
+	 * to use Safari's "Share > Add to Home Screen" flow. The banner is only shown
+	 * when all of the following are true:
+	 *   1. The device is an iPad, iPhone, or iPod (iOS)
+	 *   2. The app is NOT already running in standalone (home screen) mode
+	 *   3. The user has not previously dismissed the banner (persisted in localStorage)
+	 */
+
 	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
 
+	/** @state Controls visibility of the install banner. */
 	let show = $state(false);
 
+	/**
+	 * Lifecycle: determines whether the install banner should be displayed.
+	 * Checks platform (iOS only), standalone mode, and prior dismissal state.
+	 */
 	onMount(() => {
 		if (!browser) return;
 
-		// Only show on iOS Safari when not in standalone mode
+		// Detect iOS devices via user-agent string
 		const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+
+		// Check if the app is already running as a standalone PWA.
+		// `display-mode: standalone` works in most browsers; the proprietary
+		// `navigator.standalone` property is specific to Mobile Safari.
 		const isStandalone =
 			window.matchMedia('(display-mode: standalone)').matches ||
 			(navigator as unknown as { standalone?: boolean }).standalone === true;
+
+		// Respect the user's previous dismissal stored in localStorage
 		const dismissed = localStorage.getItem('install_banner_dismissed');
 
 		if (isIOS && !isStandalone && !dismissed) {
@@ -19,6 +43,10 @@
 		}
 	});
 
+	/**
+	 * Hides the install banner and persists the dismissal to localStorage
+	 * so the banner does not reappear on future visits.
+	 */
 	function dismiss() {
 		show = false;
 		if (browser) {
@@ -27,9 +55,12 @@
 	}
 </script>
 
+<!-- Banner is only rendered for iOS Safari users who haven't dismissed it -->
 {#if show}
+	<!-- safe-bottom class adds padding for iOS safe area (notch/home indicator) -->
 	<div class="install-banner safe-bottom">
 		<div class="install-content">
+			<!-- Download/install icon -->
 			<div class="install-icon">
 				<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
 					<path
@@ -39,6 +70,7 @@
 			</div>
 			<div class="install-text">
 				<strong>Install Shortless</strong>
+				<!-- Inline SVG renders the iOS Share icon inline with the instruction text -->
 				<span
 					>Tap <svg
 						width="14"
@@ -52,6 +84,7 @@
 					> then "Add to Home Screen"</span
 				>
 			</div>
+			<!-- Dismissal persists to localStorage to prevent banner from reappearing -->
 			<button class="dismiss-btn btn-icon" onclick={dismiss} aria-label="Dismiss">
 				<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
 					<path

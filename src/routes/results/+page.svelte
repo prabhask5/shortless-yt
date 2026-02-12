@@ -1,4 +1,24 @@
 <script lang="ts">
+	/**
+	 * Search Results Page (/results/+page.svelte)
+	 *
+	 * Displays YouTube search results with Shorts filtered out. Features:
+	 * - Filter tabs: All, Videos, Channels, Playlists
+	 * - Video-only results use VideoGrid (list layout) with Shorts filtering
+	 * - Mixed results (All/Channel/Playlist filters) render VideoCard, ChannelCard,
+	 *   and PlaylistCard components in a vertical list
+	 * - Infinite scroll pagination via IntersectionObserver
+	 * - Shows count of filtered-out Shorts for transparency
+	 * - Saves successful searches to search history (localStorage)
+	 *
+	 * Data flow:
+	 *   URL query param ?q=<query> -> $derived(query) -> $effect triggers search()
+	 *   search() fetches /api/search?q=<query>&type=<filter>&pageToken=<token>
+	 *   Video filter: response -> SearchResponse -> videos[]
+	 *   Other filters: response -> EnhancedSearchResponse -> mixedResults[]
+	 *   IntersectionObserver on sentinelEl -> triggers search(nextPageToken)
+	 *   First successful search for a query -> addSearch(query) saves to history
+	 */
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
 	import { beforeNavigate } from '$app/navigation';
@@ -16,23 +36,45 @@
 	import PlaylistCard from '$lib/components/PlaylistCard.svelte';
 	import ErrorBanner from '$lib/components/ErrorBanner.svelte';
 
+	/**
+	 * $derived rune: Reactively extracts the search query 'q' from URL search params.
+	 * Updates when the user submits a new search from the TopBar or navigates via history.
+	 */
 	let query = $derived($page.url.searchParams.get('q') || '');
+	/** $state rune: Video-only search results (used when activeFilter is 'video') */
 	let videos = $state<VideoItem[]>([]);
+	/** $state rune: Mixed search results containing videos, channels, and playlists (used for non-video filters) */
 	let mixedResults = $state<SearchResultItem[]>([]);
+	/** $state rune: Whether the initial search request is in progress */
 	let loading = $state(false);
+	/** $state rune: Whether a pagination (load more) request is in progress */
 	let loadingMore = $state(false);
+	/** $state rune: Error message from a failed search, empty string means no error */
 	let error = $state('');
+	/** $state rune: YouTube API pagination token for fetching the next page of results */
 	let nextPageToken = $state<string | undefined>();
+	/** $state rune: Running total of Shorts that were filtered out across all loaded pages */
 	let filteredCount = $state(0);
+	/** $state rune: Whether all available search results have been exhausted */
 	let reachedEnd = $state(false);
+	/** AbortController for cancelling in-flight search requests on new search or navigation */
 	let abortController: AbortController | null = null;
+	/**
+	 * $state rune: Bound reference to the sentinel <div> for infinite scroll.
+	 * Placed after the results list; IntersectionObserver watches it to trigger pagination.
+	 */
 	let sentinelEl: HTMLDivElement | undefined = $state();
+	/** IntersectionObserver instance for infinite scroll; cleaned up on unmount */
 	let observer: IntersectionObserver | null = null;
+	/** Timestamp of the last pagination load, used for 500ms debounce */
 	let lastLoadTime = 0;
 
+	/** Union type for the available search filter options */
 	type FilterType = 'video' | 'channel' | 'playlist' | 'all';
+	/** $state rune: Currently active filter tab, defaults to 'video' for Shorts-free browsing */
 	let activeFilter = $state<FilterType>('video');
 
+	/** Static definition of the filter tab options displayed in the UI */
 	const filters: { label: string; value: FilterType }[] = [
 		{ label: 'All', value: 'all' },
 		{ label: 'Videos', value: 'video' },
@@ -40,6 +82,13 @@
 		{ label: 'Playlists', value: 'playlist' }
 	];
 
+	/**
+	 * Switches the active search filter and re-executes the search.
+	 * No-ops if the same filter is already selected.
+	 * Resets filteredCount since a new filter means fresh result set.
+	 *
+	 * @param filter - The filter type to switch to
+	 */
 	function changeFilter(filter: FilterType) {
 		if (activeFilter === filter) return;
 		activeFilter = filter;
@@ -47,15 +96,37 @@
 		search();
 	}
 
+	/**
+	 * Executes a search against /api/search with the current query and filter.
+	 * Handles both initial searches (no pageToken) and paginated follow-ups.
+	 *
+	 * @param pageToken - YouTube API page token for pagination.
+	 *                    If omitted, performs a fresh search (resets results).
+	 *
+	 * When activeFilter is 'video':
+	 *   - Uses SearchResponse type (items are VideoItem[])
+	 *   - Tracks filteredCount (number of Shorts removed by server)
+	 *
+	 * When activeFilter is anything else ('all', 'channel', 'playlist'):
+	 *   - Uses EnhancedSearchResponse type (items are SearchResultItem[])
+	 *   - Each item has a `kind` field to determine which card component to render
+	 *
+	 * On first successful search (not pagination), saves query to search history.
+	 */
 	async function search(pageToken?: string) {
 		if (!query) return;
 
 		if (!pageToken) {
+			// Fresh search: abort any in-flight request, reset all state
+			if (abortController) abortController.abort();
+			abortController = new AbortController();
 			loading = true;
 			videos = [];
 			mixedResults = [];
 			reachedEnd = false;
+			nextPageToken = undefined;
 		} else {
+			// Pagination: enforce 500ms debounce to prevent IntersectionObserver rapid-fire
 			const now = Date.now();
 			if (now - lastLoadTime < 500) return;
 			lastLoadTime = now;
@@ -63,13 +134,11 @@
 		}
 		error = '';
 
-		if (abortController) abortController.abort();
-		abortController = new AbortController();
-
 		try {
 			const params = new URLSearchParams({ q: query });
 			if (pageToken) params.set('pageToken', pageToken);
 
+			// Map the filter selection to the YouTube API 'type' parameter
 			if (activeFilter === 'video') {
 				params.set('type', 'video');
 			} else if (activeFilter === 'all') {
@@ -78,24 +147,29 @@
 				params.set('type', activeFilter);
 			}
 
-			const res = await fetch(`/api/search?${params}`, { signal: abortController.signal });
+			const res = await fetch(`/api/search?${params}`, { signal: abortController?.signal });
 			if (!res.ok) {
 				const data = await res.json();
 				throw new Error(data.error || 'Search failed');
 			}
 
 			if (activeFilter === 'video') {
+				// Video-only mode: parse as SearchResponse, use videos[] array
 				const data: SearchResponse = await res.json();
 				if (pageToken) {
+					// Pagination: append via .push() for efficient Svelte 5 reactivity
 					videos.push(...data.items);
 				} else {
 					videos = data.items;
+					// Save to search history on the first page of a new search
 					addSearch(query);
 				}
 				nextPageToken = data.nextPageToken;
+				// Accumulate filtered Shorts count across pages for display
 				filteredCount += data.filteredCount;
 				if (!data.nextPageToken) reachedEnd = true;
 			} else {
+				// Mixed mode: parse as EnhancedSearchResponse, use mixedResults[] array
 				const data: EnhancedSearchResponse = await res.json();
 				if (pageToken) {
 					mixedResults.push(...data.items);
@@ -107,19 +181,32 @@
 				if (!data.nextPageToken) reachedEnd = true;
 			}
 		} catch (err) {
+			// Silently ignore AbortError (intentional cancellation)
 			if (err instanceof DOMException && err.name === 'AbortError') return;
 			error = err instanceof Error ? err.message : 'Search failed';
+			nextPageToken = undefined;
 		} finally {
 			loading = false;
 			loadingMore = false;
 		}
 	}
 
+	/**
+	 * Creates an IntersectionObserver on the sentinel element for infinite scroll.
+	 * Uses 400px rootMargin to start loading before the user reaches the bottom.
+	 * Multiple guards prevent duplicate/unnecessary requests.
+	 */
 	function setupObserver() {
 		if (!browser || observer) return;
 		observer = new IntersectionObserver(
 			(entries) => {
-				if (entries[0]?.isIntersecting && !loadingMore && !loading && nextPageToken) {
+				if (
+					entries[0]?.isIntersecting &&
+					!loadingMore &&
+					!loading &&
+					!reachedEnd &&
+					nextPageToken
+				) {
 					search(nextPageToken);
 				}
 			},
@@ -128,6 +215,11 @@
 		if (sentinelEl) observer.observe(sentinelEl);
 	}
 
+	/**
+	 * $effect rune: Watches the derived query value. When the search query changes
+	 * (e.g., user submits a new search from TopBar), resets the filtered count and
+	 * triggers a fresh search.
+	 */
 	$effect(() => {
 		if (query) {
 			filteredCount = 0;
@@ -135,12 +227,20 @@
 		}
 	});
 
+	/**
+	 * Lifecycle: Abort in-flight requests when navigating away from the results page.
+	 * Resets loading states to prevent stale UI.
+	 */
 	beforeNavigate(() => {
 		if (abortController) abortController.abort();
 		loading = false;
 		loadingMore = false;
 	});
 
+	/**
+	 * $effect rune: Attaches the IntersectionObserver once the sentinel element is bound.
+	 * Returns a cleanup function to disconnect the observer on unmount.
+	 */
 	$effect(() => {
 		if (sentinelEl && browser) {
 			setupObserver();
@@ -151,12 +251,20 @@
 		}
 	});
 
+	/**
+	 * Lifecycle: Cleanup on unmount — aborts any in-flight fetch requests.
+	 */
 	onMount(() => {
 		return () => {
 			if (abortController) abortController.abort();
 		};
 	});
 
+	/**
+	 * $derived rune: Computed boolean that checks whether there are any results to display.
+	 * Switches between videos[] and mixedResults[] based on the active filter.
+	 * Used in the template to show/hide the "no results" empty state.
+	 */
 	let hasResults = $derived(activeFilter === 'video' ? videos.length > 0 : mixedResults.length > 0);
 </script>
 

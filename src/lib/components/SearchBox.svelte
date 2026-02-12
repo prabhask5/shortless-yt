@@ -1,22 +1,53 @@
 <script lang="ts">
+	/**
+	 * SearchBox.svelte
+	 *
+	 * Reusable search input component used in the TopBar. Features a text input
+	 * with a clear button, a submit button, and a dropdown of recent search history
+	 * suggestions. The parent provides an `onSearch` callback and an optional
+	 * `initialValue` to pre-populate the input (e.g., from a URL query parameter).
+	 */
+
 	import { searchHistory } from '$lib/stores/search-history';
 
 	interface Props {
+		/** Callback invoked with the trimmed query string when the user submits a search */
 		onSearch: (query: string) => void;
+		/** Optional initial value to pre-fill the search input (e.g., from URL params) */
 		initialValue?: string;
 	}
 
 	let { onSearch, initialValue = '' }: Props = $props();
 
+	/**
+	 * @state The current text in the search input field. Needs to be $state (not $derived)
+	 * because the user types into it directly, but it also syncs from the `initialValue`
+	 * prop via the $effect below when the URL changes (e.g., browser back/forward).
+	 */
 	// eslint-disable-next-line svelte/prefer-writable-derived -- query must be writable (user input) while also syncing from prop
 	let query = $state('');
+
+	/** @state Controls visibility of the search history suggestions dropdown */
 	let showSuggestions = $state(false);
+
+	/** @state Reference to the native input element, used for programmatic focus/blur */
 	let inputEl: HTMLInputElement | undefined = $state();
 
+	/**
+	 * @effect Syncs the search input value with the `initialValue` prop.
+	 * This runs whenever `initialValue` changes (e.g., when navigating to a
+	 * different search results page), keeping the input text in sync with the URL.
+	 */
 	$effect(() => {
 		query = initialValue;
 	});
 
+	/**
+	 * Handles the search form submission. Prevents the default form behavior,
+	 * trims whitespace, calls the parent's onSearch callback, hides suggestions,
+	 * and blurs the input (which also dismisses the mobile keyboard).
+	 * @param e - The native form submit event
+	 */
 	function handleSubmit(e: Event) {
 		e.preventDefault();
 		if (query.trim()) {
@@ -26,30 +57,53 @@
 		}
 	}
 
+	/**
+	 * Clears the search input text and re-focuses the input so the user
+	 * can immediately type a new query.
+	 */
 	function handleClear() {
 		query = '';
 		inputEl?.focus();
 	}
 
+	/**
+	 * Handles clicking on a search history suggestion. Sets the query to the
+	 * selected item, triggers the search, and closes the suggestions dropdown.
+	 * @param item - The search history entry the user clicked on
+	 */
 	function handleSuggestionClick(item: string) {
 		query = item;
 		onSearch(item);
 		showSuggestions = false;
 	}
 
+	/**
+	 * Shows the search history suggestions dropdown when the input receives focus,
+	 * but only if there are history entries to display.
+	 */
 	function handleFocus() {
 		if ($searchHistory.length > 0) {
 			showSuggestions = true;
 		}
 	}
 
+	/**
+	 * Hides the suggestions dropdown when the input loses focus. Uses a 200ms
+	 * delay so that if the user is clicking on a suggestion item, the click
+	 * event fires before the dropdown disappears (onmousedown on suggestions
+	 * fires before onblur completes the timeout).
+	 */
 	function handleBlur() {
-		// Delay to allow click on suggestion
 		setTimeout(() => {
 			showSuggestions = false;
 		}, 200);
 	}
 
+	/**
+	 * Handles keyboard events on the search input. Pressing Escape closes
+	 * the suggestions dropdown and removes focus from the input.
+	 * @param e - The native keyboard event
+	 */
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
 			showSuggestions = false;
@@ -97,6 +151,8 @@
 		</svg>
 	</button>
 
+	<!-- Search history dropdown: capped at 8 most recent entries. Uses onmousedown
+		 instead of onclick so it fires before the input's onblur timeout hides the dropdown -->
 	{#if showSuggestions && $searchHistory.length > 0}
 		<div class="suggestions">
 			{#each $searchHistory.slice(0, 8) as item (item)}

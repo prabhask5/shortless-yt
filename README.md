@@ -4,6 +4,8 @@ A YouTube web client built with SvelteKit that removes Shorts from all content s
 
 Try it at: [https://youtube.prabhas.io](https://youtube.prabhas.io)
 
+For a deep dive into how the backend works, see **[ARCHITECTURE.md](./ARCHITECTURE.md)** — a comprehensive guide covering the server-side data layer, caching strategy, Shorts detection algorithm, OAuth flow, and more.
+
 ## Features
 
 - **Search videos** with automatic Shorts filtering and backfill

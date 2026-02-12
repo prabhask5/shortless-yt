@@ -1,3 +1,18 @@
+<!--
+  About Page (/about/+page.svelte)
+
+  Static informational page describing the Shortless application. Contains:
+  - App name and tagline
+  - "What is Shortless?" section explaining the app's purpose (YouTube without Shorts)
+  - Features list (Shorts-free browsing, search, trending, personalized recommendations, etc.)
+  - "How It Works" technical explanation (YouTube Data API v3, duration filtering, embedded player)
+  - "Google Sign-In and User Data" section detailing OAuth scope, data usage, and privacy
+  - "Open Source" section with link to GitHub repository
+  - Footer links to Privacy Policy and Terms of Service
+
+  This page has no script block — it is purely static HTML with scoped styles.
+  No data fetching or reactive state is needed.
+-->
 <svelte:head>
 	<title>About - Shortless</title>
 </svelte:head>

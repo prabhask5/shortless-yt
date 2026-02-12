@@ -1,14 +1,42 @@
 <script lang="ts">
+	/**
+	 * ShortsBlockPage.svelte
+	 *
+	 * A full-page placeholder displayed when a user navigates to a video that has
+	 * been identified as a YouTube Short. Since the core purpose of this app is to
+	 * provide a Shorts-free YouTube experience, this component intercepts Short
+	 * videos and shows an informative block screen instead of playing them.
+	 *
+	 * Provides two actions:
+	 *   1. "Open on YouTube" -- opens the video in a new tab on youtube.com
+	 *   2. "Show anyway (this time)" -- optional override that lets the user
+	 *      bypass the block for this specific video (only shown when the parent
+	 *      provides the `onShowAnyway` callback)
+	 */
+
 	interface Props {
+		/** The YouTube video ID of the blocked Short, used for the YouTube link. */
 		videoId: string;
+		/**
+		 * Optional callback to bypass the Shorts block for this video.
+		 * When provided, a "Show anyway" button is rendered. When omitted,
+		 * the user can only open the video externally on YouTube.
+		 */
 		onShowAnyway?: () => void;
 	}
 
+	/**
+	 * Destructured component props via Svelte 5 $props() rune.
+	 * `videoId` is always required; `onShowAnyway` is optional and controls
+	 * whether the bypass button is rendered.
+	 */
 	let { videoId, onShowAnyway }: Props = $props();
 </script>
 
+<!-- Full-page centered block screen, vertically centered in the viewport -->
 <div class="shorts-block">
 	<div class="block-content">
+		<!-- "No entry" / block circle icon to visually indicate content is blocked -->
 		<div class="block-icon">
 			<svg width="64" height="64" viewBox="0 0 24 24" fill="currentColor">
 				<path
@@ -21,6 +49,7 @@
 			This video appears to be a YouTube Short, which is filtered out by Shortless.
 		</p>
 		<div class="block-actions">
+			<!-- Always available: opens the Short on youtube.com in a new tab -->
 			<a
 				href="https://www.youtube.com/watch?v={videoId}"
 				target="_blank"
@@ -29,6 +58,7 @@
 			>
 				Open on YouTube
 			</a>
+			<!-- Optional bypass: only rendered when parent provides the onShowAnyway callback -->
 			{#if onShowAnyway}
 				<button class="btn btn-secondary" onclick={onShowAnyway}> Show anyway (this time) </button>
 			{/if}

@@ -1,15 +1,36 @@
 <script lang="ts">
+	/**
+	 * VideoCard.svelte
+	 *
+	 * Renders a single video as a clickable card. Supports three visual layouts:
+	 *   - "grid": default card layout for the home page / channel page (thumbnail on top, info below)
+	 *   - "list": horizontal layout used in search results (thumbnail left, details right)
+	 *   - "compact": small horizontal layout used in the related-videos sidebar
+	 *
+	 * The entire card is an <a> link to the watch page. The channel avatar and
+	 * channel name are interactive sub-elements that navigate to the channel page
+	 * without following the outer link.
+	 */
+
 	import { goto } from '$app/navigation';
 	import type { VideoItem } from '$lib/types';
 	import { formatViewCount, formatDuration, formatRelativeTime } from '$lib/utils/format';
 
 	interface Props {
+		/** The video data object containing title, thumbnails, channel info, stats, etc. */
 		video: VideoItem;
+		/** Visual layout variant. Defaults to 'grid'. */
 		layout?: 'grid' | 'list' | 'compact';
 	}
 
+	/** Destructure props with Svelte 5 $props() rune; layout defaults to 'grid' */
 	let { video, layout = 'grid' }: Props = $props();
 
+	/**
+	 * $derived rune: automatically recomputes the best available thumbnail URL
+	 * whenever the `video` prop changes. Prefers medium > high > default resolution
+	 * to balance quality vs. file size for card-level display.
+	 */
 	let thumbnail = $derived(
 		video.thumbnails.medium?.url ||
 			video.thumbnails.high?.url ||
@@ -17,11 +38,21 @@
 			''
 	);
 
+	/** $derived rune: formatted video duration string (e.g. "12:34"), recalculated when video changes */
 	let duration = $derived(formatDuration(video.duration));
+	/** $derived rune: human-readable view count (e.g. "1.2M views"), recalculated when video changes */
 	let views = $derived(formatViewCount(video.viewCount));
+	/** $derived rune: relative time since publish (e.g. "3 days ago"), recalculated when video changes */
 	let age = $derived(formatRelativeTime(video.publishedAt));
 
+	/**
+	 * Navigates to the channel page when the user clicks or presses Enter on
+	 * the channel avatar or channel name. Uses preventDefault + stopPropagation
+	 * so the outer <a> link (to the watch page) is not triggered.
+	 * @param e - The mouse click or keyboard event
+	 */
 	function goToChannel(e: MouseEvent | KeyboardEvent) {
+		// Only respond to Enter key presses for keyboard events (ignore Tab, Space, etc.)
 		if (e instanceof KeyboardEvent && e.key !== 'Enter') return;
 		e.preventDefault();
 		e.stopPropagation();
@@ -29,8 +60,11 @@
 	}
 </script>
 
-<a href="/watch/{video.id}" class="video-card {layout}" data-sveltekit-preload-data="hover">
+<!-- Entire card is wrapped in an <a> tag linking to the watch page.
+     data-sveltekit-preload-data="tap" triggers SvelteKit data preloading on pointer down. -->
+<a href="/watch/{video.id}" class="video-card {layout}" data-sveltekit-preload-data="tap">
 	<div class="thumbnail-container">
+		<!-- Lazy-loaded thumbnail with explicit dimensions to prevent layout shift -->
 		<img
 			src={thumbnail}
 			alt={video.title}
@@ -40,11 +74,14 @@
 			width="480"
 			height="270"
 		/>
+		<!-- Duration badge is only shown if the video has a parseable duration (e.g. not a live stream) -->
 		{#if duration}
 			<span class="duration-badge">{duration}</span>
 		{/if}
 	</div>
 	<div class="video-info">
+		<!-- Channel avatar: uses role="link" + tabindex to act as a nested interactive element.
+		     onclick/onkeydown call goToChannel which stops propagation to prevent the outer <a> from firing. -->
 		<span
 			class="channel-avatar-placeholder"
 			role="link"
@@ -53,6 +90,7 @@
 			onkeydown={goToChannel}
 		>
 			{#if video.channelThumbnail}
+				<!-- referrerpolicy="no-referrer" avoids sending our origin to Google's image CDN -->
 				<img
 					src={video.channelThumbnail}
 					alt={video.channelTitle}
@@ -64,11 +102,14 @@
 					referrerpolicy="no-referrer"
 				/>
 			{:else}
+				<!-- Fallback: show the first letter of the channel name in a colored circle -->
 				<div class="avatar-circle">{video.channelTitle.charAt(0).toUpperCase()}</div>
 			{/if}
 		</span>
 		<div class="video-details">
+			<!-- line-clamp-2 (global utility class) truncates the title to 2 lines with ellipsis -->
 			<h3 class="video-title line-clamp-2">{video.title}</h3>
+			<!-- Channel name is also a nested interactive element navigating to the channel page -->
 			<span
 				class="channel-name"
 				role="link"

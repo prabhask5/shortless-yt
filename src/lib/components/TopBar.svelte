@@ -1,30 +1,62 @@
 <script lang="ts">
+	/**
+	 * TopBar.svelte
+	 *
+	 * Fixed top navigation bar for the application. Contains the site logo/brand link,
+	 * a centered search box, a dark/light theme toggle, and user authentication controls
+	 * (sign in button or avatar dropdown menu). Sits at the top of every page and uses
+	 * `position: fixed` with z-index layering above other content.
+	 */
+
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { authState, signOut } from '$lib/stores/auth';
 	import { theme, toggleTheme } from '$lib/stores/theme';
 	import SearchBox from './SearchBox.svelte';
 
+	/** @state Tracks whether the user account dropdown menu is currently open */
 	let showUserMenu = $state(false);
 
+	/**
+	 * Handles a search submission from the SearchBox child component.
+	 * Navigates to the search results page with the query as a URL parameter.
+	 * @param query - The user's search query string
+	 */
 	function handleSearch(query: string) {
 		goto(`/results?q=${encodeURIComponent(query)}`);
 	}
 
+	/**
+	 * Initiates the OAuth sign-in flow by redirecting the browser
+	 * to the server-side authentication endpoint. Uses a full page
+	 * redirect (not SvelteKit navigation) since this is an external auth flow.
+	 */
 	function handleSignIn() {
 		window.location.href = '/api/auth/login';
 	}
 
+	/**
+	 * Signs the user out by calling the auth store's signOut function,
+	 * then closes the user menu dropdown.
+	 */
 	async function handleSignOut() {
 		await signOut();
 		showUserMenu = false;
 	}
 
+	/**
+	 * Toggles the visibility of the user account dropdown menu.
+	 */
 	function handleMenuToggle() {
 		showUserMenu = !showUserMenu;
 	}
 
-	// Close menu on outside click
+	/**
+	 * Global click handler attached to the window to close the user menu
+	 * when clicking anywhere outside the menu container. Uses DOM traversal
+	 * via `.closest()` to determine if the click target is within the menu.
+	 * @param e - The native mouse click event
+	 */
 	function handleOutsideClick(e: MouseEvent) {
 		const target = e.target as HTMLElement;
 		if (!target.closest('.user-menu-container')) {
@@ -32,12 +64,18 @@
 		}
 	}
 
-	// Get initial query from URL
+	/**
+	 * @derived Reactively extracts the 'q' search parameter from the current page URL.
+	 * Tracks `$page.url` so it updates whenever the URL changes (e.g., navigating
+	 * back to a search results page). Passed to SearchBox to pre-fill the input.
+	 */
 	let initialQuery = $derived($page.url.searchParams.get('q') || '');
 </script>
 
+<!-- Attach a global window click listener to close the user menu on outside clicks -->
 <svelte:window onclick={handleOutsideClick} />
 
+<!-- safe-top class adds padding for iOS notch/status bar area -->
 <header class="topbar safe-top">
 	<div class="topbar-inner">
 		<div class="topbar-start">
@@ -62,6 +100,7 @@
 		</div>
 
 		<div class="topbar-end">
+			<!-- Theme toggle: shows sun icon in dark mode, moon icon in light mode -->
 			<button
 				class="btn-icon"
 				onclick={toggleTheme}
@@ -83,10 +122,12 @@
 				{/if}
 			</button>
 
-			{#if $authState.isSignedIn && $authState.user}
+			<!-- Auth-dependent rendering: show avatar dropdown if signed in, sign-in button otherwise -->
+		{#if $authState.isSignedIn && $authState.user}
 				<div class="user-menu-container">
 					<button class="avatar-btn" onclick={handleMenuToggle} aria-label="Account menu">
-						<img
+						<!-- referrerpolicy="no-referrer" prevents Google from rejecting the avatar request -->
+					<img
 							src={$authState.user.picture}
 							alt={$authState.user.name}
 							class="avatar-img"

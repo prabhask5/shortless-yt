@@ -1,20 +1,39 @@
 <script lang="ts">
+	/**
+	 * VideoMeta.svelte
+	 *
+	 * Displays the metadata section below the video player on the watch page.
+	 * Includes: video title, channel avatar/name link, like count chip,
+	 * formatted view count, publish date, and an optional "Premium not applying?" help button.
+	 *
+	 * This is a presentational component with no internal state -- all data
+	 * comes from the `video` prop and is formatted via utility functions.
+	 */
+
 	import type { VideoItem } from '$lib/types';
 	import { formatViewCount, formatDate, formatLikeCount } from '$lib/utils/format';
 
 	interface Props {
+		/** The full video data object (title, channel info, stats, timestamps, etc.) */
 		video: VideoItem;
+		/** Optional callback invoked when the user clicks the "Premium not applying?" link.
+		 *  When undefined, the link is not rendered. */
 		onPremiumHelp?: () => void;
 	}
 
+	/** Destructure props with Svelte 5 $props() rune */
 	let { video, onPremiumHelp }: Props = $props();
 </script>
 
+<!-- Video metadata section displayed below the player on the watch page -->
 <div class="video-meta">
 	<h1 class="video-title">{video.title}</h1>
+	<!-- meta-bar: flex row with channel info on the left, action chips/stats on the right.
+	     Wraps on narrow screens via flex-wrap. -->
 	<div class="meta-bar">
 		<div class="meta-info">
 			<div class="channel-row">
+				<!-- Channel avatar links to the channel page -->
 				<a href="/channel/{video.channelId}" class="channel-avatar-link">
 					{#if video.channelThumbnail}
 						<img
@@ -28,6 +47,7 @@
 							referrerpolicy="no-referrer"
 						/>
 					{:else}
+						<!-- Fallback avatar: first letter of the channel name -->
 						<div class="channel-avatar">
 							{video.channelTitle.charAt(0).toUpperCase()}
 						</div>
@@ -38,7 +58,9 @@
 				</div>
 			</div>
 		</div>
+		<!-- Right side: like count pill, view count, publish date, and optional premium help link -->
 		<div class="meta-actions">
+			<!-- Like count displayed as a chip/pill with a thumbs-up SVG icon -->
 			<div class="action-chip">
 				<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
 					<path
@@ -49,6 +71,7 @@
 			</div>
 			<div class="stat-text">{formatViewCount(video.viewCount)}</div>
 			<div class="stat-text">{formatDate(video.publishedAt)}</div>
+			<!-- Premium help link only renders when the parent provides the callback -->
 			{#if onPremiumHelp}
 				<button class="premium-link" onclick={onPremiumHelp}> Premium not applying? </button>
 			{/if}

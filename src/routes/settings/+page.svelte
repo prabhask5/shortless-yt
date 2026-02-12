@@ -1,26 +1,60 @@
 <script lang="ts">
+	/**
+	 * Settings Page (/settings/+page.svelte)
+	 *
+	 * User-configurable preferences for the Shortless app. Sections:
+	 * - Appearance: Toggle between light and dark mode (persisted via theme store)
+	 * - Shorts Filter: Configure the maximum duration threshold (in seconds) for
+	 *   classifying videos as Shorts (default 60s, options: 60/90/120s)
+	 * - Account: Sign in/out with Google (shows profile info when signed in)
+	 * - About Premium & Ads: Informational card about YouTube embedded player ad behavior
+	 * - Legal: Links to About, Privacy Policy, and Terms of Service pages
+	 *
+	 * Data flow:
+	 *   shortsThreshold is loaded from localStorage on init and saved on change
+	 *   Theme toggle uses the theme store which persists to localStorage and updates CSS
+	 *   Auth actions redirect to /api/auth/login or call signOut() store action
+	 */
 	import { browser } from '$app/environment';
 	import { authState, signOut } from '$lib/stores/auth';
 	import { theme, toggleTheme } from '$lib/stores/theme';
 
+	/**
+	 * $state rune: The Shorts duration threshold in seconds.
+	 * Videos shorter than this value are classified as Shorts and filtered out.
+	 * Default is 60 seconds; configurable to 60, 90, or 120.
+	 */
 	let shortsThreshold = $state(60);
 
-	// Load saved threshold
+	// Load the previously saved threshold from localStorage on component initialization.
+	// This runs at module evaluation time (not in onMount) since it only reads a value.
 	if (browser) {
 		const saved = localStorage.getItem('shorts_threshold');
 		if (saved) shortsThreshold = parseInt(saved, 10);
 	}
 
+	/**
+	 * Persists the current Shorts threshold value to localStorage.
+	 * Called when the user changes the <select> dropdown value.
+	 */
 	function saveShortsThreshold() {
 		if (browser) {
 			localStorage.setItem('shorts_threshold', shortsThreshold.toString());
 		}
 	}
 
+	/**
+	 * Initiates Google OAuth sign-in by navigating to the server's auth login endpoint.
+	 * This triggers a full-page redirect to Google's consent screen.
+	 */
 	function handleSignIn() {
 		window.location.href = '/api/auth/login';
 	}
 
+	/**
+	 * Signs the user out by calling the auth store's signOut action,
+	 * which clears the session cookie and resets the authState store.
+	 */
 	async function handleSignOut() {
 		await signOut();
 	}

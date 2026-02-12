@@ -1,6 +1,21 @@
 <script lang="ts">
+	/**
+	 * BottomNav.svelte
+	 *
+	 * Mobile-only bottom navigation bar, displayed as a fixed bar at the bottom
+	 * of the viewport. Mirrors the same navigation links as SideNav (Home,
+	 * Subscriptions, Settings) but in a horizontal, touch-friendly layout.
+	 * Only visible on screens <=768px via CSS media query (display: none by default).
+	 * Uses `safe-area-inset-bottom` to account for device notches/home indicators.
+	 */
+
 	import { page } from '$app/stores';
 
+	/**
+	 * @derived Reactively tracks the current page pathname from the SvelteKit page store.
+	 * Used to apply the `active` CSS class to the matching bottom nav link,
+	 * providing visual feedback for the current route on mobile devices.
+	 */
 	let currentPath: string = $derived($page.url.pathname);
 </script>
 

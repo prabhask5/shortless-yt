@@ -1,3 +1,22 @@
+<!--
+  Terms of Service Page (/terms/+page.svelte)
+
+  Static legal page displaying the Shortless terms of service. Covers:
+  - Acceptance of terms
+  - Description of service (YouTube alternative with Shorts filtered out, using YouTube Data API v3)
+  - User accounts: optional sign-in, responsibilities, revocation
+  - Acceptable use policy (no abuse, scraping, or service disruption)
+  - YouTube content: all content sourced from YouTube, users bound by YouTube ToS and Google Privacy Policy
+  - Intellectual property: open-source, not affiliated with Google/YouTube
+  - Disclaimer of warranties ("as is" / "as available")
+  - Limitation of liability
+  - Termination rights
+  - Changes to terms policy
+  - Contact information (GitHub issues)
+
+  This page has no script block — it is purely static HTML with scoped styles.
+  No data fetching or reactive state is needed.
+-->
 <svelte:head>
 	<title>Terms of Service - Shortless Youtube</title>
 </svelte:head>

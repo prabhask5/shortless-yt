@@ -1,4 +1,24 @@
 <script lang="ts">
+	/**
+	 * Subscriptions Page (/subscriptions/+page.svelte)
+	 *
+	 * Displays a personalized feed of videos from the user's YouTube subscriptions.
+	 * Requires Google sign-in to access subscription data. Features:
+	 * - Horizontal scrollable row of subscribed channel avatars (chip links)
+	 * - Video grid feed from /api/recommended (uses subscription data when authenticated)
+	 * - Infinite scroll pagination
+	 * - Sign-in prompt for unauthenticated users
+	 * - Loading spinner while auth state is being determined
+	 *
+	 * Data flow:
+	 *   Auth state check ($effect):
+	 *     - If signed in: loadSubscriptions() + loadFeed() run in parallel
+	 *     - If not signed in: shows sign-in prompt
+	 *   loadSubscriptions() -> /api/subscriptions -> populates channel chips bar
+	 *   loadFeed() -> /api/recommended?offset=<n>&pageToken=<token> -> populates videos[]
+	 *   IntersectionObserver on sentinelEl -> triggers loadFeed(true) for pagination
+	 *   Offset increments by 4 per page for subscription channel rotation on the server
+	 */
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
 	import { authState, authLoading } from '$lib/stores/auth';
@@ -6,18 +26,38 @@
 	import VideoGrid from '$lib/components/VideoGrid.svelte';
 	import ErrorBanner from '$lib/components/ErrorBanner.svelte';
 
+	/** $state rune: List of the user's subscribed YouTube channels, displayed as chip links */
 	let channels = $state<SubscriptionChannel[]>([]);
+	/** $state rune: Video feed items from subscribed channels */
 	let videos = $state<VideoItem[]>([]);
+	/** $state rune: Whether the initial feed load is in progress */
 	let loading = $state(true);
+	/** $state rune: Whether a pagination (load more) request is in progress */
 	let loadingMore = $state(false);
+	/** $state rune: Error message from a failed fetch, empty string means no error */
 	let error = $state('');
+	/** $state rune: YouTube API pagination token for the next page of feed results */
 	let nextPageToken = $state<string | undefined>();
+	/** $state rune: Whether all available feed results have been exhausted */
 	let reachedEnd = $state(false);
+	/**
+	 * $state rune: Offset counter for server-side subscription channel rotation.
+	 * Incremented by 4 per page so the server queries different channels each time,
+	 * providing variety in the subscription feed.
+	 */
 	let offset = $state(0);
+	/** $state rune: Bound reference to the sentinel <div> for infinite scroll */
 	let sentinelEl: HTMLDivElement | undefined = $state();
+	/** IntersectionObserver instance for infinite scroll; cleaned up on unmount */
 	let observer: IntersectionObserver | null = null;
+	/** Timestamp of the last pagination load, used for 500ms debounce */
 	let lastLoadTime = 0;
 
+	/**
+	 * Fetches the user's YouTube subscription channel list from /api/subscriptions.
+	 * These are displayed as clickable avatar chips above the video feed.
+	 * Non-critical: failures are silently ignored since the feed can work without chips.
+	 */
 	async function loadSubscriptions() {
 		try {
 			const res = await fetch('/api/subscriptions');
@@ -26,17 +66,26 @@
 				channels = data.channels || [];
 			}
 		} catch {
-			// Non-critical
+			// Non-critical: channel chips are informational only
 		}
 	}
 
+	/**
+	 * Fetches the subscription-based video feed from /api/recommended.
+	 * Uses offset parameter for server-side channel rotation across pages.
+	 *
+	 * @param isMore - If true, this is a pagination request (appends to existing videos).
+	 *                 If false (default), this is a fresh load (resets all state).
+	 */
 	async function loadFeed(isMore = false) {
 		if (!isMore) {
+			// Fresh load: reset all state
 			loading = true;
 			videos = [];
 			reachedEnd = false;
 			offset = 0;
 		} else {
+			// Pagination: enforce 500ms debounce against IntersectionObserver rapid-fire
 			const now = Date.now();
 			if (now - lastLoadTime < 500) return;
 			lastLoadTime = now;
@@ -54,23 +103,32 @@
 			const data: SearchResponse = await res.json();
 
 			if (isMore) {
+				// Pagination: append via .push() for efficient Svelte 5 proxy reactivity
 				videos.push(...data.items);
 			} else {
 				videos = data.items;
 			}
 
 			nextPageToken = data.nextPageToken;
+			// Advance offset by 4 so the server rotates to different subscription channels
 			offset += 4;
 
 			if (!data.nextPageToken) reachedEnd = true;
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to load feed';
+			nextPageToken = undefined;
 		} finally {
 			loading = false;
 			loadingMore = false;
 		}
 	}
 
+	/**
+	 * Creates an IntersectionObserver on the sentinel element for infinite scroll.
+	 * Uses 400px rootMargin to preload before the user reaches the bottom.
+	 * Note: unlike other pages, this observer does not check nextPageToken because
+	 * the feed may continue even when the token is temporarily undefined.
+	 */
 	function setupObserver() {
 		if (!browser || observer) return;
 		observer = new IntersectionObserver(
@@ -84,6 +142,12 @@
 		if (sentinelEl) observer.observe(sentinelEl);
 	}
 
+	/**
+	 * $effect rune: Watches auth state. Once the user is confirmed signed in (and auth
+	 * loading is complete), triggers parallel loads for subscriptions and feed.
+	 * This ensures the page does not attempt API calls that require auth before
+	 * the session is verified.
+	 */
 	$effect(() => {
 		if ($authState.isSignedIn && !$authLoading) {
 			loadSubscriptions();
@@ -91,6 +155,10 @@
 		}
 	});
 
+	/**
+	 * $effect rune: Attaches the IntersectionObserver once the sentinel element is bound.
+	 * Returns a cleanup function to disconnect the observer on unmount.
+	 */
 	$effect(() => {
 		if (sentinelEl && browser) {
 			setupObserver();
@@ -101,12 +169,20 @@
 		}
 	});
 
+	/**
+	 * $effect rune: Handles the unauthenticated state. Once auth loading completes
+	 * and the user is confirmed NOT signed in, stops the loading spinner so the
+	 * sign-in prompt is shown immediately instead of an indefinite spinner.
+	 */
 	$effect(() => {
 		if (!$authLoading && !$authState.isSignedIn) {
 			loading = false;
 		}
 	});
 
+	/**
+	 * Lifecycle: Cleanup on unmount — disconnects the IntersectionObserver.
+	 */
 	onMount(() => {
 		return () => {
 			observer?.disconnect();

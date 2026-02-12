@@ -1,23 +1,54 @@
 <script lang="ts">
+	/**
+	 * CommentItem.svelte
+	 *
+	 * Renders a single comment thread: the top-level comment plus an expandable
+	 * replies section. Replies are lazy-loaded from the API when the user clicks
+	 * the "N replies" toggle, and additional pages can be fetched with "Show more replies".
+	 *
+	 * The component manages its own reply-loading state so that each thread
+	 * operates independently within the parent CommentList.
+	 */
+
 	import type { CommentThread, Comment } from '$lib/types';
 	import { formatRelativeTime, formatLikeCount, decodeEntities } from '$lib/utils/format';
 
 	interface Props {
+		/** A comment thread object containing the top-level comment, inline replies, and reply count */
 		thread: CommentThread;
 	}
 
+	/** Destructure props with Svelte 5 $props() rune */
 	let { thread }: Props = $props();
 
+	/** $state rune: whether the replies section is currently expanded/visible */
 	let showReplies = $state(false);
+	/**
+	 * $state rune: the array of reply Comment objects currently loaded for display.
+	 * This is writable (not $derived) because it gets updated both from the prop
+	 * (initial inline replies) and from API fetches (full reply list / pagination).
+	 */
 	// eslint-disable-next-line svelte/prefer-writable-derived -- loadedReplies must be writable (new replies loaded) while syncing from prop
 	let loadedReplies = $state<Comment[]>([]);
+	/** $state rune: true while an API request for replies is in-flight */
 	let loadingReplies = $state(false);
 
+	/**
+	 * $effect rune: syncs loadedReplies from the thread prop whenever the thread changes.
+	 * This handles the case where the parent re-renders with fresh thread data (e.g. on
+	 * sort order change), ensuring we start with the inline reply snippet from the API.
+	 */
 	$effect(() => {
 		loadedReplies = thread.replies || [];
 	});
+	/** $state rune: pagination token for fetching the next batch of replies */
 	let repliesPageToken = $state<string | undefined>();
 
+	/**
+	 * Toggles the replies section open/closed. On first open, if the inline
+	 * reply snippet is incomplete (fewer than totalReplyCount), fetches the
+	 * full reply list from the API. Subsequent toggles just show/hide.
+	 */
 	async function toggleReplies() {
 		if (showReplies) {
 			showReplies = false;
@@ -26,6 +57,7 @@
 
 		showReplies = true;
 
+		// Only fetch from API if we don't have all replies locally yet
 		if (loadedReplies.length < thread.totalReplyCount) {
 			loadingReplies = true;
 			try {
@@ -35,13 +67,18 @@
 				loadedReplies = data.items || [];
 				repliesPageToken = data.nextPageToken;
 			} catch {
-				// Keep existing replies
+				// Keep existing replies on error so the user still sees the inline snippet
 			} finally {
 				loadingReplies = false;
 			}
 		}
 	}
 
+	/**
+	 * Fetches the next page of replies using the stored pagination token.
+	 * Appends new replies to the existing loadedReplies array.
+	 * Called by the "Show more replies" button.
+	 */
 	async function loadMoreReplies() {
 		if (!repliesPageToken) return;
 		loadingReplies = true;
@@ -55,17 +92,23 @@
 			loadedReplies = [...loadedReplies, ...(data.items || [])];
 			repliesPageToken = data.nextPageToken;
 		} catch {
-			// ignore
+			// ignore -- keep previously loaded replies visible
 		} finally {
 			loadingReplies = false;
 		}
 	}
 
+	/**
+	 * $derived rune: convenience alias for the top-level comment in this thread.
+	 * Recomputes whenever the thread prop changes.
+	 */
 	let comment = $derived(thread.topLevelComment);
 </script>
 
+<!-- A single comment thread: top-level comment + expandable replies -->
 <div class="comment-thread">
 	<div class="comment">
+		<!-- Author avatar: shows profile image or falls back to first letter initial -->
 		<div class="comment-avatar">
 			{#if comment.authorProfileImageUrl}
 				<img
@@ -83,8 +126,11 @@
 				<span class="comment-author">{comment.authorDisplayName}</span>
 				<span class="comment-time">{formatRelativeTime(comment.publishedAt)}</span>
 			</div>
+			<!-- decodeEntities handles HTML entities (e.g. &amp;) in comment text.
+			     Prefers textOriginal (raw text) over textDisplay (may contain HTML markup). -->
 			<div class="comment-text">{decodeEntities(comment.textOriginal || comment.textDisplay)}</div>
 			<div class="comment-actions">
+				<!-- Like count only shown for comments with at least 1 like -->
 				{#if comment.likeCount > 0}
 					<span class="like-count">
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
@@ -95,8 +141,10 @@
 						{formatLikeCount(comment.likeCount)}
 					</span>
 				{/if}
+				<!-- Replies toggle button: shows reply count and a chevron that rotates when expanded -->
 				{#if thread.totalReplyCount > 0}
 					<button class="replies-toggle" onclick={toggleReplies}>
+						<!-- class:rotated flips the chevron 180deg when replies are visible -->
 						<svg
 							width="14"
 							height="14"
@@ -112,9 +160,11 @@
 				{/if}
 			</div>
 
+			<!-- Replies section: conditionally rendered when the user toggles replies open -->
 			{#if showReplies}
 				<div class="replies">
 					{#each loadedReplies as reply (reply.id)}
+						<!-- Replies use a smaller avatar ("small" class) to visually nest them -->
 						<div class="comment reply">
 							<div class="comment-avatar small">
 								{#if reply.authorProfileImageUrl}
@@ -156,6 +206,7 @@
 						<div class="loading-replies">Loading replies...</div>
 					{/if}
 
+					<!-- "Show more replies" only shown when there are more pages to fetch -->
 					{#if repliesPageToken && !loadingReplies}
 						<button class="show-more-replies" onclick={loadMoreReplies}> Show more replies </button>
 					{/if}
