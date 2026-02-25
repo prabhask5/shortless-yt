@@ -117,24 +117,33 @@ You need to get the file `userscript/shortless-youtube.user.js` from this repo i
 
 ### Step 6: Add YouTube to Your Home Screen
 
-This creates a home screen icon that opens YouTube directly in Safari — it looks and feels like a native app:
+**Important:** Do NOT use Safari's "Add to Home Screen" — that creates a standalone web app (PWA) that runs outside of Safari, which means extensions (including this userscript) will not work. Instead, use the **Shortcuts** app to create a home screen icon that opens YouTube inside Safari where the extension is active:
 
-1. In Safari, with youtube.com loaded, tap the **Share** button (the square with an arrow pointing up, at the bottom of the screen)
-2. Scroll down and tap **"Add to Home Screen"**
-3. Name it **"YouTube"** (or whatever you want)
-4. Tap **Add**
-5. You now have a YouTube icon on your home screen that opens the Shorts-free version
+1. Open the **Shortcuts** app (built into iOS — if you deleted it, re-download it from the App Store)
+2. Tap the **+** button in the top-right corner to create a new shortcut
+3. Tap **Add Action**
+4. Search for **"Open URLs"** and select it
+5. Tap the blue **"URL"** placeholder text and type: `https://www.youtube.com`
+6. Tap the shortcut name at the top of the screen (it will say something like "Open URLs") --> tap **Rename** --> type **"YouTube"**
+7. Tap the icon next to the name --> choose a color and glyph that looks like YouTube (red background + play triangle), or tap **"Choose Photo"** to use a YouTube logo you've saved
+8. Tap the **share button** at the bottom of the screen (square with arrow pointing up)
+9. Tap **"Add to Home Screen"**
+10. Verify the name is **"YouTube"** and tap **Add**
+
+You now have a home screen icon that opens YouTube directly inside Safari — with the Shortless YouTube userscript running automatically.
 
 ### Step 7: Remove the YouTube App (Optional but Recommended)
 
-If you keep the YouTube app installed, you might accidentally open it instead of Safari. To remove it:
+If you keep the YouTube app installed, iOS will try to open YouTube links in the app instead of Safari. To prevent this:
 
 1. Long-press the **YouTube** app icon on your home screen
 2. Tap **"Remove App"** --> **"Delete App"**
    - Or if you want to keep the app data: tap **"Remove from Home Screen"** instead, then go to Settings --> General --> iPhone Storage --> YouTube --> **"Offload App"**
-3. Your new Safari-based "YouTube" icon replaces it on the home screen
+3. Your new Shortcuts-based "YouTube" icon replaces it on the home screen
 
-**Result:** You now have a home screen icon that opens a completely Shorts-free YouTube. It uses Safari under the hood, with the Userscripts extension injecting the Shortless YouTube script automatically. No YouTube app needed.
+**Why delete the app?** Even if you have the home screen shortcut, iOS will intercept YouTube links (from Messages, Mail, other apps) and open them in the YouTube app instead of Safari. Removing the app ensures all YouTube links open in Safari where the userscript is active.
+
+**Result:** You now have a home screen icon that opens a completely Shorts-free YouTube. It opens inside Safari (not as a standalone web app), so the Userscripts extension injects the Shortless YouTube script automatically. No YouTube app needed.
 
 ---
 
