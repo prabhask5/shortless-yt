@@ -1,0 +1,14 @@
+{
+  "name": "shortless-youtube",
+  "version": "1.0.0",
+  "description": "Remove all traces of YouTube Shorts from the YouTube website",
+  "type": "module",
+  "scripts": {
+    "build": "node build.js",
+    "build:firefox": "node build.js firefox",
+    "build:chrome": "node build.js chrome",
+    "clean": "rm -rf dist-firefox dist-chrome",
+    "package": "npm run build && cd dist-firefox && zip -r ../shortless-youtube-firefox.zip . && cd ../dist-chrome && zip -r ../shortless-youtube-chrome.zip . && cd ..",
+    "release": "node release.js"
+  }
+}
