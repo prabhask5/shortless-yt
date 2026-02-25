@@ -91,10 +91,15 @@ function hide(el) {
  * Splits into desktop vs mobile paths to avoid unnecessary DOM queries.
  */
 function runCleanupPass() {
-  if (isMobile) {
-    runMobileCleanup();
-  } else {
-    runDesktopCleanup();
+  isRunningCleanup = true;
+  try {
+    if (isMobile) {
+      runMobileCleanup();
+    } else {
+      runDesktopCleanup();
+    }
+  } finally {
+    isRunningCleanup = false;
   }
 }
 
@@ -140,30 +145,43 @@ function runDesktopCleanup() {
 }
 
 /**
- * Mobile cleanup — targets the Shorts section containers, nav items,
- * and individual Shorts cards that CSS might not catch.
+ * Mobile cleanup — hides individual Shorts elements only.
+ * IMPORTANT: Never hide entire section containers (ytm-rich-section-renderer,
+ * ytm-item-section-renderer) because YouTube puts regular videos and Shorts
+ * in the SAME section. Hiding the section nukes all regular content.
  */
 function runMobileCleanup() {
-  // Shorts sections: the parent container with header + shelf + three-dot menu
-  const sections = document.querySelectorAll(
-    "ytm-rich-section-renderer, ytm-item-section-renderer"
+  // Individual Shorts lockup cards — hide the card and its direct rich-item wrapper
+  const cards = document.querySelectorAll(
+    "ytm-shorts-lockup-view-model, ytm-shorts-lockup-view-model-v2"
   );
-  for (const section of sections) {
-    if (
-      section.querySelector(
-        "ytm-shorts-lockup-view-model, ytm-shorts-lockup-view-model-v2, " +
-        "ytm-reel-shelf-renderer, ytm-shorts-shelf-renderer, " +
-        '[data-style="SHORTS"], a[href*="/shorts/"]'
-      )
-    ) {
-      hide(section);
-      continue;
-    }
-    // Check header text as final fallback
-    const header = section.querySelector("h2, [role='heading'], span[title]");
-    if (header && /\bShorts\b/i.test(header.textContent || "")) {
-      hide(section);
-    }
+  for (const card of cards) {
+    hide(card);
+    hide(card.closest("ytm-rich-item-renderer"));
+  }
+
+  // Shorts shelves inside sections — hide the shelf, not the section
+  const shelves = document.querySelectorAll(
+    "ytm-reel-shelf-renderer, ytm-shorts-shelf-renderer"
+  );
+  for (const shelf of shelves) {
+    hide(shelf);
+  }
+
+  // Shorts-styled video renderers
+  const shortsVideos = document.querySelectorAll(
+    'ytm-video-with-context-renderer:has([data-style="SHORTS"])'
+  );
+  for (const vid of shortsVideos) {
+    hide(vid);
+  }
+
+  // Shorts section headers (so there's no orphaned "Shorts" title)
+  const headers = document.querySelectorAll(
+    ".shortsLockupViewModelHostHeaderText, .reel-shelf-header, .shorts-shelf-header"
+  );
+  for (const header of headers) {
+    hide(header);
   }
 
   // Bottom nav "Shorts" tab
@@ -175,15 +193,6 @@ function runMobileCleanup() {
     ) {
       hide(item);
     }
-  }
-
-  // Stray Shorts lockup cards — hide card and parent rich-item
-  const cards = document.querySelectorAll(
-    "ytm-shorts-lockup-view-model, ytm-shorts-lockup-view-model-v2"
-  );
-  for (const card of cards) {
-    hide(card);
-    hide(card.closest("ytm-rich-item-renderer"));
   }
 
   // Mobile channel tabs
@@ -220,12 +229,20 @@ function scheduleCleanup() {
   }, DEBOUNCE_MS);
 }
 
+/** @type {MutationObserver|null} */
+let observer = null;
+
+/** @type {boolean} — Prevents our own DOM changes from re-triggering cleanup. */
+let isRunningCleanup = false;
+
 /**
  * Start the MutationObserver when DOM is ready.
  */
 function initObserver() {
-  const observer = new MutationObserver(() => {
-    scheduleCleanup();
+  observer = new MutationObserver(() => {
+    if (!isRunningCleanup) {
+      scheduleCleanup();
+    }
   });
 
   observer.observe(document.documentElement, {

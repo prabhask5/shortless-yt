@@ -208,30 +208,19 @@ ytm-rich-item-renderer:has(ytm-shorts-lockup-view-model-v2),
 
 ytm-video-with-context-renderer:has([data-style="SHORTS"]),
 
-/* ---- Mobile Shorts sections (header + shelf container) ---- */
-/* These are the parent sections that contain the "Shorts" subheader
- * (icon + title + three-dot "show fewer shorts" menu) and the shelf.
- * IMPORTANT: Only match sections by Shorts-specific child elements,
- * NOT by href catch-alls — a mixed section with one /shorts/ link
- * would incorrectly hide all its regular video content too. */
+/* ---- Mobile Shorts section headers ---- */
+/* IMPORTANT: Do NOT hide entire ytm-rich-section-renderer or
+ * ytm-item-section-renderer containers — on mobile, YouTube often
+ * puts regular videos and Shorts in the SAME section. Hiding the
+ * section would nuke all regular content too. Instead, we only hide
+ * the individual Shorts elements (lockups, shelves, cards) above,
+ * and hide the Shorts-specific HEADER elements below so there's no
+ * orphaned "Shorts" title sitting above nothing. */
 
-/** Rich section containing Shorts-specific lockup/shelf elements. */
-ytm-rich-section-renderer:has(ytm-shorts-lockup-view-model),
-ytm-rich-section-renderer:has(ytm-shorts-lockup-view-model-v2),
-ytm-rich-section-renderer:has(ytm-reel-shelf-renderer),
-ytm-rich-section-renderer:has(ytm-shorts-shelf-renderer),
-
-/** Rich section matched by header text/class. */
-ytm-rich-section-renderer:has(span[title="Shorts"]),
-ytm-rich-section-renderer:has(.shortsLockupViewModelHostHeaderText),
-ytm-rich-section-renderer:has(.reel-shelf-header),
-ytm-rich-section-renderer:has(.shorts-shelf-header),
-
-/** Item section containing Shorts-specific shelf renderers. */
-ytm-item-section-renderer:has(ytm-reel-shelf-renderer),
-ytm-item-section-renderer:has(ytm-shorts-lockup-view-model),
-ytm-item-section-renderer:has(ytm-shorts-lockup-view-model-v2),
-ytm-item-section-renderer:has(ytm-shorts-shelf-renderer),
+/** Shorts section header text elements. */
+.shortsLockupViewModelHostHeaderText,
+.reel-shelf-header,
+.shorts-shelf-header,
 
 /* ---- Mobile channel page Shorts tab ---- */
 

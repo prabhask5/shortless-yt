@@ -124,22 +124,10 @@
     'ytm-video-with-context-renderer:has([data-style="SHORTS"])',
     '{ display: none !important; }',
 
-    '/* === Mobile: Shorts sections (header + shelf + three-dot menu) === */',
-    'ytm-rich-section-renderer:has(ytm-shorts-lockup-view-model),',
-    'ytm-rich-section-renderer:has(ytm-shorts-lockup-view-model-v2),',
-    'ytm-rich-section-renderer:has(ytm-reel-shelf-renderer),',
-    'ytm-rich-section-renderer:has(ytm-shorts-shelf-renderer),',
-    'ytm-rich-section-renderer:has(span[title="Shorts"]),',
-    'ytm-rich-section-renderer:has(.shortsLockupViewModelHostHeaderText),',
-    'ytm-rich-section-renderer:has(.reel-shelf-header),',
-    'ytm-rich-section-renderer:has(.shorts-shelf-header)',
-    '{ display: none !important; }',
-
-    '/* === Mobile: Item sections containing Shorts shelves === */',
-    'ytm-item-section-renderer:has(ytm-reel-shelf-renderer),',
-    'ytm-item-section-renderer:has(ytm-shorts-lockup-view-model),',
-    'ytm-item-section-renderer:has(ytm-shorts-lockup-view-model-v2),',
-    'ytm-item-section-renderer:has(ytm-shorts-shelf-renderer)',
+    '/* === Mobile: Shorts section headers (hide orphaned headings) === */',
+    '.shortsLockupViewModelHostHeaderText,',
+    '.reel-shelf-header,',
+    '.shorts-shelf-header',
     '{ display: none !important; }',
 
     '/* === Mobile: Channel tab, notifications === */',
@@ -231,11 +219,19 @@
    * Run cleanup — only queries elements relevant to the current platform.
    * CSS handles ~95% of hiding; this catches localized text and edge cases.
    */
+  /** @type {boolean} — Prevents our own DOM changes from re-triggering cleanup. */
+  var isRunningCleanup = false;
+
   function runCleanupPass() {
-    if (isMobile) {
-      runMobileCleanup();
-    } else {
-      runDesktopCleanup();
+    isRunningCleanup = true;
+    try {
+      if (isMobile) {
+        runMobileCleanup();
+      } else {
+        runDesktopCleanup();
+      }
+    } finally {
+      isRunningCleanup = false;
     }
   }
 
@@ -278,26 +274,37 @@
 
   /** Mobile-only cleanup. */
   function runMobileCleanup() {
-    // Shorts sections (header + shelf + three-dot menu)
-    var sections = document.querySelectorAll(
-      'ytm-rich-section-renderer, ytm-item-section-renderer'
+    // Individual Shorts lockup cards — hide the card and its direct rich-item wrapper
+    var cards = document.querySelectorAll(
+      'ytm-shorts-lockup-view-model, ytm-shorts-lockup-view-model-v2'
     );
-    for (var i = 0; i < sections.length; i++) {
-      var section = sections[i];
-      if (
-        section.querySelector(
-          'ytm-shorts-lockup-view-model, ytm-shorts-lockup-view-model-v2, ' +
-          'ytm-reel-shelf-renderer, ytm-shorts-shelf-renderer, ' +
-          '[data-style="SHORTS"], a[href*="/shorts/"]'
-        )
-      ) {
-        hide(section);
-        continue;
-      }
-      var header = section.querySelector('h2, [role="heading"], span[title]');
-      if (header && /\bShorts\b/i.test(header.textContent || '')) {
-        hide(section);
-      }
+    for (var i = 0; i < cards.length; i++) {
+      hide(cards[i]);
+      hide(cards[i].closest('ytm-rich-item-renderer'));
+    }
+
+    // Shorts shelves inside sections — hide the shelf, not the section
+    var shelves = document.querySelectorAll(
+      'ytm-reel-shelf-renderer, ytm-shorts-shelf-renderer'
+    );
+    for (var i = 0; i < shelves.length; i++) {
+      hide(shelves[i]);
+    }
+
+    // Shorts-styled video renderers
+    var shortsVideos = document.querySelectorAll(
+      'ytm-video-with-context-renderer[data-style="SHORTS"]'
+    );
+    for (var i = 0; i < shortsVideos.length; i++) {
+      hide(shortsVideos[i]);
+    }
+
+    // Shorts section headers (so there's no orphaned "Shorts" title)
+    var headers = document.querySelectorAll(
+      '.shortsLockupViewModelHostHeaderText, .reel-shelf-header, .shorts-shelf-header'
+    );
+    for (var i = 0; i < headers.length; i++) {
+      hide(headers[i]);
     }
 
     // Bottom nav "Shorts" tab
@@ -309,15 +316,6 @@
       ) {
         hide(navItems[i]);
       }
-    }
-
-    // Stray Shorts cards
-    var cards = document.querySelectorAll(
-      'ytm-shorts-lockup-view-model, ytm-shorts-lockup-view-model-v2'
-    );
-    for (var i = 0; i < cards.length; i++) {
-      hide(cards[i]);
-      hide(cards[i].closest('ytm-rich-item-renderer'));
     }
 
     // Mobile channel tabs
@@ -357,7 +355,9 @@
    */
   function initObserver() {
     var observer = new MutationObserver(function () {
-      scheduleCleanup();
+      if (!isRunningCleanup) {
+        scheduleCleanup();
+      }
     });
     observer.observe(document.documentElement, { childList: true, subtree: true });
     runCleanupPass();
