@@ -207,20 +207,18 @@
       shelves[i].style.display = 'none';
     }
 
-    // Mobile: Shorts shelf section (header + triple-dot menu)
-    // The shelf itself (ytm-reel-shelf-renderer) is hidden by CSS, but
-    // the parent section still shows the "Shorts" header. Hide the
-    // parent section ONLY if it contains no regular video content.
-    var reelShelves = document.querySelectorAll('ytm-reel-shelf-renderer');
-    for (var i = 0; i < reelShelves.length; i++) {
-      var parentSection = reelShelves[i].closest('ytm-rich-section-renderer, ytm-item-section-renderer');
-      if (!parentSection) continue;
-      // Safety: check the section has no regular videos before hiding
-      var hasRegularVideos = parentSection.querySelector(
-        'ytm-video-with-context-renderer, ytm-compact-video-renderer, ytm-media-item'
-      );
-      if (!hasRegularVideos) {
-        parentSection.style.display = 'none';
+    // Mobile: Shorts sections (header + grid of shorts cards)
+    // These are ytm-rich-section-renderer elements containing
+    // ytm-shorts-lockup-view-model items inside a grid-shelf-view-model.
+    // Hide the entire section since it's exclusively shorts content.
+    var shortsCards = document.querySelectorAll('ytm-shorts-lockup-view-model');
+    for (var i = 0; i < shortsCards.length; i++) {
+      var section = shortsCards[i].closest('ytm-rich-section-renderer');
+      if (section && section.style.display !== 'none') {
+        // Safety: only hide if no regular videos inside
+        if (!section.querySelector('ytm-video-with-context-renderer, ytm-compact-video-renderer, ytm-media-item')) {
+          section.style.display = 'none';
+        }
       }
     }
 
