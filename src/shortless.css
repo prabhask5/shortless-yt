@@ -94,7 +94,12 @@ tp-yt-paper-tab:has(yt-formatted-string[title="Shorts"]) {
  * ========================================================================= */
 
 /** Filter chip labeled "Shorts" in the chip cloud bar. */
-yt-chip-cloud-chip-renderer:has(yt-formatted-string[title="Shorts"]) {
+yt-chip-cloud-chip-renderer:has(yt-formatted-string[title="Shorts"]),
+
+/** Filter chip on history/library pages — uses chip-view-model element.
+  * Hide the wrapper div too to eliminate its padding. */
+chip-view-model:has(button[aria-label="Shorts"]),
+.ytChipBarViewModelChipWrapper:has(button[aria-label="Shorts"]) {
   display: none !important;
 }
 
@@ -121,7 +126,20 @@ ytd-reel-shelf-renderer[is-shorts] {
 }
 
 /* =========================================================================
- * 8. MOBILE WEB (m.youtube.com)
+ * 8. "LATEST SHORTS FROM [CHANNEL]" IN SEARCH RESULTS
+ *    Search results show a grid-shelf-view-model containing
+ *    ytm-shorts-lockup-view-model items (shorts-only custom elements),
+ *    with a header and show more/less buttons. Hide the entire
+ *    item-section wrapper so no trace remains.
+ * ========================================================================= */
+
+/** Grid shelf containing Shorts lockup cards (search results). */
+grid-shelf-view-model:has(ytm-shorts-lockup-view-model) {
+  display: none !important;
+}
+
+/* =========================================================================
+ * 9. MOBILE WEB (m.youtube.com)
  *    Mobile web uses its own `ytm-*` custom elements. These selectors
  *    cover the mobile Shorts shelf, bottom-bar navigation icon, and
  *    individual Shorts cards. Useful for the userscript variant on

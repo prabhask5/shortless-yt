@@ -92,7 +92,12 @@ const DEBOUNCE_MS = 150;
  *   - Shorts filter/chip buttons
  *   - Notification menu items linking to /shorts/
  */
+/** @type {boolean} — Prevents our own DOM changes from re-triggering cleanup. */
+let isRunningCleanup = false;
+
 function runCleanupPass() {
+  isRunningCleanup = true;
+  try {
   // ---- Shorts in "Up next" sidebar ----
   // YouTube marks Shorts with an overlay badge inside compact renderers.
   // The overlay element has `[overlay-style="SHORTS"]` or contains "SHORTS" text.
@@ -150,7 +155,7 @@ function runCleanupPass() {
   // The chip bar on search results / home feed uses <yt-chip-cloud-chip-renderer>.
   /** @type {NodeListOf<HTMLElement>} */
   const chips = document.querySelectorAll(
-    "yt-chip-cloud-chip-renderer, ytd-search-filter-renderer"
+    "yt-chip-cloud-chip-renderer, ytd-search-filter-renderer, chip-view-model"
   );
   for (const chip of chips) {
     if (/\bShorts\b/i.test(chip.textContent || "")) {
@@ -181,6 +186,24 @@ function runCleanupPass() {
   for (const shelf of shortsShelves) {
     shelf.style.display = "none";
   }
+
+  // ---- "Latest Shorts from [CHANNEL]" in search results ----
+  // These use a <grid-shelf-view-model> containing ytm-shorts-lockup-view-model
+  // items. Hide the grid-shelf-view-model itself (NOT the parent section,
+  // which contains all search results).
+  /** @type {NodeListOf<HTMLElement>} */
+  const shortsLockups = document.querySelectorAll(
+    "grid-shelf-view-model ytm-shorts-lockup-view-model"
+  );
+  for (const lockup of shortsLockups) {
+    const shelf = lockup.closest("grid-shelf-view-model");
+    if (shelf) {
+      shelf.style.display = "none";
+    }
+  }
+  } finally {
+    isRunningCleanup = false;
+  }
 }
 
 /**
@@ -204,10 +227,11 @@ function scheduleCleanup() {
  * dynamically loaded Shorts content (infinite scroll, navigation, etc.).
  */
 function initObserver() {
-  const observer = new MutationObserver((mutations) => {
-    // We don't inspect individual mutations — any DOM change could introduce
-    // Shorts content, so we just schedule a full cleanup pass.
-    scheduleCleanup();
+  const observer = new MutationObserver(() => {
+    // Ignore mutations caused by our own hide() calls to prevent infinite loops.
+    if (!isRunningCleanup) {
+      scheduleCleanup();
+    }
   });
 
   observer.observe(document.documentElement, {
