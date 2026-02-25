@@ -125,7 +125,7 @@ You need to get the file `userscript/shortless-youtube.user.js` from this repo i
 4. Search for **"Open URLs"** and select it
 5. Tap the blue **"URL"** placeholder text and type: `https://www.youtube.com`
 6. Tap the shortcut name at the top of the screen (it will say something like "Open URLs") --> tap **Rename** --> type **"YouTube"**
-7. Tap the icon next to the name --> choose a color and glyph that looks like YouTube (red background + play triangle), or tap **"Choose Photo"** to use a YouTube logo you've saved
+7. Tap the icon next to the name --> tap **"Choose Photo"** --> select the YouTube icon included in this repo at `icons/homescreen-icon.png` (save it to your phone first — AirDrop it, or open the file on GitHub in Safari, long-press the image, and tap "Save to Photos")
 8. Tap the **share button** at the bottom of the screen (square with arrow pointing up)
 9. Tap **"Add to Home Screen"**
 10. Verify the name is **"YouTube"** and tap **Add**
