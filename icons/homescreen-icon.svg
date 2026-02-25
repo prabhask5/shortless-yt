@@ -1,8 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" width="180" height="180">
-  <!-- White background (iOS will round the corners automatically) -->
-  <rect width="180" height="180" rx="0" ry="0" fill="#FFFFFF"/>
-  <!-- YouTube red rounded rectangle -->
-  <rect x="20" y="45" width="140" height="90" rx="20" ry="20" fill="#FF0000"/>
-  <!-- White play triangle -->
-  <polygon points="72,60 72,120 120,90" fill="#FFFFFF"/>
+  <!-- Solid red background (iOS rounds the corners automatically) -->
+  <rect width="180" height="180" fill="#FF0000"/>
+  <!-- White play triangle, centered -->
+  <polygon points="68,45 68,135 138,90" fill="#FFFFFF"/>
 </svg>

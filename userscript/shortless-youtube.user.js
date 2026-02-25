@@ -21,6 +21,8 @@
  *   - Desktop browsers via Tampermonkey, Violentmonkey, or Greasemonkey
  *
  * Combines CSS injection and JavaScript DOM manipulation in a single file.
+ * Every Shorts-specific selector is targeted precisely so that all other
+ * YouTube functionality and styling remains completely unchanged.
  */
 (function () {
   'use strict';
@@ -30,77 +32,139 @@
   // ===========================================================================
   // Inject hiding styles immediately at document-start so Shorts elements are
   // hidden before the first paint. We append to documentElement since <head>
-  // may not exist yet.
+  // may not exist yet. Only Shorts-specific elements are targeted — all other
+  // YouTube UI remains untouched.
 
   /**
    * Comprehensive CSS rules that hide all known YouTube Shorts elements.
    * Covers both desktop (ytd-*) and mobile (ytm-*) custom elements.
    * @type {string}
    */
-  const SHORTLESS_CSS = `
-    /* --- Shorts Shelves & Carousels --- */
-    ytd-reel-shelf-renderer,
-    ytd-rich-shelf-renderer[is-shorts],
-    ytd-rich-grid-slim-media,
-    ytd-reel-item-renderer,
-    ytd-reel-video-renderer {
-      display: none !important;
-    }
+  var SHORTLESS_CSS = [
+    '/* === Desktop: Shorts shelves & carousels === */',
+    'ytd-reel-shelf-renderer,',
+    'ytd-rich-shelf-renderer[is-shorts],',
+    'ytd-rich-grid-slim-media,',
+    'ytd-reel-item-renderer,',
+    'ytd-reel-video-renderer,',
+    'ytd-reel-shelf-renderer[is-shorts]',
+    '{ display: none !important; }',
 
-    /* --- Individual Shorts in Feeds (by overlay badge) --- */
-    ytd-grid-video-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"]),
-    ytd-rich-item-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"]),
-    ytd-video-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"]),
-    ytd-compact-video-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"]) {
-      display: none !important;
-    }
+    '/* === Desktop: Shorts in feeds by overlay badge === */',
+    'ytd-grid-video-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"]),',
+    'ytd-rich-item-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"]),',
+    'ytd-video-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"]),',
+    'ytd-compact-video-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"])',
+    '{ display: none !important; }',
 
-    /* --- Sidebar Navigation --- */
-    ytd-guide-entry-renderer:has(a[title="Shorts"]),
-    ytd-mini-guide-entry-renderer:has(a[title="Shorts"]) {
-      display: none !important;
-    }
+    '/* === Desktop: Shorts in feeds by /shorts/ href === */',
+    'ytd-grid-video-renderer:has(a[href*="/shorts/"]),',
+    'ytd-rich-item-renderer:has(a[href*="/shorts/"]),',
+    'ytd-video-renderer:has(a[href*="/shorts/"]),',
+    'ytd-compact-video-renderer:has(a[href*="/shorts/"])',
+    '{ display: none !important; }',
 
-    /* --- Channel Page Shorts Tab --- */
-    yt-tab-shape[tab-title="Shorts"],
-    tp-yt-paper-tab:has(yt-formatted-string[title="Shorts"]) {
-      display: none !important;
-    }
+    '/* === Desktop: Sidebar navigation === */',
+    'ytd-guide-entry-renderer:has(a[title="Shorts"]),',
+    'ytd-guide-entry-renderer:has(a[href="/shorts"]),',
+    'ytd-mini-guide-entry-renderer:has(a[title="Shorts"]),',
+    'ytd-mini-guide-entry-renderer:has(a[href="/shorts"])',
+    '{ display: none !important; }',
 
-    /* --- Shorts Filter Chips & Search Tabs --- */
-    yt-chip-cloud-chip-renderer:has(yt-formatted-string[title="Shorts"]),
-    yt-chip-cloud-chip-renderer[chip-title="Shorts"],
-    yt-chip-cloud-chip-renderer:has(a[title="Shorts"]),
-    yt-tab-shape[tab-title="Shorts"],
-    ytd-search-filter-renderer:has(a[title="Shorts"]),
-    ytd-search-filter-renderer:has(yt-formatted-string[title="Shorts"]),
-    ytd-search-filter-group-renderer a[title="Short (<4 minutes)"] {
-      display: none !important;
-    }
+    '/* === Desktop: Channel page Shorts tab === */',
+    'yt-tab-shape[tab-title="Shorts"],',
+    'tp-yt-paper-tab:has(yt-formatted-string[title="Shorts"]),',
+    'yt-tab-shape:has(a[href*="/shorts"]),',
+    'tp-yt-paper-tab:has(a[href*="/shorts"])',
+    '{ display: none !important; }',
 
-    /* --- Notifications --- */
-    ytd-notification-renderer:has(a[href*="/shorts/"]) {
-      display: none !important;
-    }
+    '/* === Desktop: Search filter chips & tabs === */',
+    'yt-chip-cloud-chip-renderer:has(yt-formatted-string[title="Shorts"]),',
+    'yt-chip-cloud-chip-renderer[chip-title="Shorts"],',
+    'yt-chip-cloud-chip-renderer:has(a[title="Shorts"]),',
+    'yt-tab-shape[tab-title="Shorts"],',
+    'ytd-search-filter-renderer:has(a[title="Shorts"]),',
+    'ytd-search-filter-renderer:has(yt-formatted-string[title="Shorts"]),',
+    'ytd-search-filter-group-renderer a[title="Short (<4 minutes)"]',
+    '{ display: none !important; }',
 
-    /* --- "Shorts remixing this video" section --- */
-    ytd-reel-shelf-renderer[is-shorts] {
-      display: none !important;
-    }
+    '/* === Desktop: Notifications === */',
+    'ytd-notification-renderer:has(a[href*="/shorts/"])',
+    '{ display: none !important; }',
 
-    /* --- Mobile Web (m.youtube.com) --- */
-    ytm-reel-shelf-renderer,
-    ytm-pivot-bar-item-renderer:has(.pivot-shorts),
-    ytm-shorts-lockup-view-model,
-    ytm-rich-item-renderer:has(ytm-shorts-lockup-view-model),
-    ytm-video-with-context-renderer:has([data-style="SHORTS"]) {
-      display: none !important;
-    }
-  `;
+    '/* === Desktop: Sections containing /shorts/ links === */',
+    'ytd-rich-section-renderer:has(a[href*="/shorts/"]),',
+    'ytd-item-section-renderer:has(ytd-reel-shelf-renderer)',
+    '{ display: none !important; }',
+
+    '/* === Desktop: Shorts player page === */',
+    'ytd-shorts,',
+    'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-shorts-description"]',
+    '{ display: none !important; }',
+
+    '/* === Mobile: Shorts shelves === */',
+    'ytm-reel-shelf-renderer,',
+    'ytm-shorts-shelf-renderer',
+    '{ display: none !important; }',
+
+    '/* === Mobile: Bottom navigation Shorts tab === */',
+    'ytm-pivot-bar-item-renderer:has(.pivot-shorts),',
+    'ytm-pivot-bar-item-renderer:has(a[href="/shorts"])',
+    '{ display: none !important; }',
+
+    '/* === Mobile: Shorts cards === */',
+    'ytm-shorts-lockup-view-model,',
+    'ytm-shorts-lockup-view-model-v2',
+    '{ display: none !important; }',
+
+    '/* === Mobile: Rich items wrapping Shorts === */',
+    'ytm-rich-item-renderer:has(ytm-shorts-lockup-view-model),',
+    'ytm-rich-item-renderer:has(ytm-shorts-lockup-view-model-v2),',
+    'ytm-rich-item-renderer:has(a[href*="/shorts/"])',
+    '{ display: none !important; }',
+
+    '/* === Mobile: Video renderers with SHORTS style === */',
+    'ytm-video-with-context-renderer:has([data-style="SHORTS"]),',
+    'ytm-video-with-context-renderer:has(a[href*="/shorts/"])',
+    '{ display: none !important; }',
+
+    '/* === Mobile: Shorts sections (header + shelf + three-dot menu) === */',
+    'ytm-rich-section-renderer:has(ytm-shorts-lockup-view-model),',
+    'ytm-rich-section-renderer:has(ytm-shorts-lockup-view-model-v2),',
+    'ytm-rich-section-renderer:has(ytm-reel-shelf-renderer),',
+    'ytm-rich-section-renderer:has(ytm-shorts-shelf-renderer),',
+    'ytm-rich-section-renderer:has([data-style="SHORTS"]),',
+    'ytm-rich-section-renderer:has(a[href*="/shorts/"]),',
+    'ytm-rich-section-renderer:has(span[title="Shorts"]),',
+    'ytm-rich-section-renderer:has(.shortsLockupViewModelHostHeaderText),',
+    'ytm-rich-section-renderer:has(.reel-shelf-header),',
+    'ytm-rich-section-renderer:has(.shorts-shelf-header)',
+    '{ display: none !important; }',
+
+    '/* === Mobile: Item sections containing Shorts === */',
+    'ytm-item-section-renderer:has(ytm-reel-shelf-renderer),',
+    'ytm-item-section-renderer:has(ytm-shorts-lockup-view-model),',
+    'ytm-item-section-renderer:has(ytm-shorts-lockup-view-model-v2),',
+    'ytm-item-section-renderer:has(ytm-shorts-shelf-renderer),',
+    'ytm-item-section-renderer:has(a[href*="/shorts/"])',
+    '{ display: none !important; }',
+
+    '/* === Mobile: Stray media items linking to /shorts/ === */',
+    'ytm-media-item:has(a[href*="/shorts/"]),',
+    'ytm-compact-video-renderer:has(a[href*="/shorts/"]),',
+    'ytm-tab-renderer:has(a[href*="/shorts"]),',
+    'ytm-notification-renderer:has(a[href*="/shorts/"])',
+    '{ display: none !important; }',
+
+    '/* === Mobile: Shorts player page === */',
+    'ytm-shorts-player',
+    '{ display: none !important; }',
+  ].join('\n');
 
   /** @type {HTMLStyleElement} */
-  const style = document.createElement('style');
+  var style = document.createElement('style');
   style.textContent = SHORTLESS_CSS;
+  // Append to documentElement because <head> may not exist yet at document-start
   (document.documentElement || document).appendChild(style);
 
   // ===========================================================================
@@ -111,22 +175,20 @@
    * Regex matching /shorts/VIDEO_ID paths and capturing the 11-char video ID.
    * @type {RegExp}
    */
-  const SHORTS_PATH_RE = /^\/shorts\/([a-zA-Z0-9_-]{11})/;
+  var SHORTS_PATH_RE = /^\/shorts\/([a-zA-Z0-9_-]{11})/;
 
   /**
    * Redirect /shorts/VIDEO_ID to /watch?v=VIDEO_ID immediately.
-   * Uses location.replace() to avoid polluting browser history.
    */
   (function immediateRedirect() {
-    const match = location.pathname.match(SHORTS_PATH_RE);
+    var match = location.pathname.match(SHORTS_PATH_RE);
     if (match) {
       location.replace('/watch?v=' + match[1]);
     }
   })();
 
   /**
-   * Intercept YouTube's SPA navigation start event to catch /shorts/ navigations
-   * before the URL changes.
+   * Intercept YouTube's SPA navigation start event.
    */
   document.addEventListener('yt-navigate-start', function (e) {
     try {
@@ -137,22 +199,20 @@
           location.replace('/watch?v=' + match[1]);
         }
       }
-    } catch (_) {
-      // Silently ignore unexpected event shapes
-    }
+    } catch (_) {}
   });
 
   // ===========================================================================
   // Phase 2: MutationObserver DOM Cleanup
   // ===========================================================================
+  // JS fallback for anything CSS can't catch — localized text, missing
+  // attributes, older browsers without :has() support, etc.
 
   /** @type {number|null} */
   var cleanupTimer = null;
 
   /**
-   * Tracks whether a cleanup pass has run since the last navigation.
-   * After a navigation, the first cleanup is immediate (no debounce) to
-   * prevent any flash of Shorts content.
+   * After navigation, first cleanup runs immediately (no debounce).
    * @type {boolean}
    */
   var needsImmediateCleanup = true;
@@ -161,79 +221,128 @@
   var DEBOUNCE_MS = 150;
 
   /**
-   * Run a cleanup pass removing Shorts elements that CSS :has() might miss
-   * in older browsers or with localized text.
+   * Detect mobile vs desktop once. Avoids querying irrelevant elements.
+   * @type {boolean}
+   */
+  var isMobile = location.hostname === 'm.youtube.com';
+
+  /**
+   * Hide an element. No-ops if already hidden or null.
+   * @param {HTMLElement|null} el
+   */
+  function hide(el) {
+    if (el && el.style.display !== 'none') {
+      el.style.display = 'none';
+    }
+  }
+
+  /**
+   * Run cleanup — only queries elements relevant to the current platform.
+   * CSS handles ~95% of hiding; this catches localized text and edge cases.
    */
   function runCleanupPass() {
-    // Shorts in "Up next" sidebar
-    var overlays = document.querySelectorAll(
-      'ytd-compact-video-renderer [overlay-style="SHORTS"]'
-    );
+    if (isMobile) {
+      runMobileCleanup();
+    } else {
+      runDesktopCleanup();
+    }
+  }
+
+  /** Desktop-only cleanup. */
+  function runDesktopCleanup() {
+    // Overlay badge fallback (for browsers without :has())
+    var overlays = document.querySelectorAll('[overlay-style="SHORTS"]');
     for (var i = 0; i < overlays.length; i++) {
-      var renderer = overlays[i].closest('ytd-compact-video-renderer');
-      if (renderer) renderer.style.display = 'none';
+      hide(overlays[i].closest(
+        'ytd-compact-video-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-rich-item-renderer'
+      ));
     }
 
-    // Sidebar navigation "Shorts" entries
-    var guideEntries = document.querySelectorAll('ytd-guide-entry-renderer');
+    // Sidebar "Shorts" entries — text match for localized labels
+    var guideEntries = document.querySelectorAll(
+      'ytd-guide-entry-renderer, ytd-mini-guide-entry-renderer'
+    );
     for (var i = 0; i < guideEntries.length; i++) {
-      var title = guideEntries[i].querySelector('yt-formatted-string');
-      if (title && /\bShorts\b/i.test(title.textContent || '')) {
-        guideEntries[i].style.display = 'none';
+      if (/\bShorts\b/i.test(guideEntries[i].textContent || '')) {
+        hide(guideEntries[i]);
       }
     }
 
-    var miniEntries = document.querySelectorAll('ytd-mini-guide-entry-renderer');
-    for (var i = 0; i < miniEntries.length; i++) {
-      var label = miniEntries[i].querySelector('.yt-spec-button-shape-next--button-text-content, .title');
-      if (label && /\bShorts\b/i.test(label.textContent || '')) {
-        miniEntries[i].style.display = 'none';
-      }
-    }
-
-    // Channel tab strip
-    var tabs = document.querySelectorAll("yt-tab-shape, tp-yt-paper-tab, yt-tab-group-shape [role='tab']");
+    // Channel tabs & search tabs — text match
+    var tabs = document.querySelectorAll('yt-tab-shape, tp-yt-paper-tab');
     for (var i = 0; i < tabs.length; i++) {
       if (/\bShorts\b/i.test(tabs[i].textContent || '')) {
-        tabs[i].style.display = 'none';
+        hide(tabs[i]);
       }
     }
 
-    // Filter chips
+    // Filter chips — text match
     var chips = document.querySelectorAll('yt-chip-cloud-chip-renderer');
     for (var i = 0; i < chips.length; i++) {
       if (/\bShorts\b/i.test(chips[i].textContent || '')) {
-        chips[i].style.display = 'none';
+        hide(chips[i]);
+      }
+    }
+  }
+
+  /** Mobile-only cleanup. */
+  function runMobileCleanup() {
+    // Shorts sections (header + shelf + three-dot menu)
+    var sections = document.querySelectorAll(
+      'ytm-rich-section-renderer, ytm-item-section-renderer'
+    );
+    for (var i = 0; i < sections.length; i++) {
+      var section = sections[i];
+      if (
+        section.querySelector(
+          'ytm-shorts-lockup-view-model, ytm-shorts-lockup-view-model-v2, ' +
+          'ytm-reel-shelf-renderer, ytm-shorts-shelf-renderer, ' +
+          '[data-style="SHORTS"], a[href*="/shorts/"]'
+        )
+      ) {
+        hide(section);
+        continue;
+      }
+      var header = section.querySelector('h2, [role="heading"], span[title]');
+      if (header && /\bShorts\b/i.test(header.textContent || '')) {
+        hide(section);
       }
     }
 
-    // Notifications
-    var notifications = document.querySelectorAll('ytd-notification-renderer');
-    for (var i = 0; i < notifications.length; i++) {
-      if (notifications[i].querySelector("a[href*='/shorts/']")) {
-        notifications[i].style.display = 'none';
+    // Bottom nav "Shorts" tab
+    var navItems = document.querySelectorAll('ytm-pivot-bar-item-renderer');
+    for (var i = 0; i < navItems.length; i++) {
+      if (
+        navItems[i].querySelector('.pivot-shorts, a[href="/shorts"]') ||
+        /\bShorts\b/i.test(navItems[i].textContent || '')
+      ) {
+        hide(navItems[i]);
       }
     }
 
-    // Shorts shelves
-    var shelves = document.querySelectorAll('ytd-reel-shelf-renderer, ytd-rich-shelf-renderer[is-shorts]');
-    for (var i = 0; i < shelves.length; i++) {
-      shelves[i].style.display = 'none';
+    // Stray Shorts cards
+    var cards = document.querySelectorAll(
+      'ytm-shorts-lockup-view-model, ytm-shorts-lockup-view-model-v2'
+    );
+    for (var i = 0; i < cards.length; i++) {
+      hide(cards[i]);
+      hide(cards[i].closest('ytm-rich-item-renderer'));
     }
 
-    // Mobile: Shorts nav item (text-based fallback)
-    var mobileNavItems = document.querySelectorAll('ytm-pivot-bar-item-renderer');
-    for (var i = 0; i < mobileNavItems.length; i++) {
-      if (mobileNavItems[i].querySelector('.pivot-shorts') || /\bShorts\b/i.test(mobileNavItems[i].textContent || '')) {
-        mobileNavItems[i].style.display = 'none';
+    // Mobile channel tabs
+    var tabs = document.querySelectorAll('ytm-tab-renderer');
+    for (var i = 0; i < tabs.length; i++) {
+      if (
+        tabs[i].querySelector('a[href*="/shorts"]') ||
+        /\bShorts\b/i.test(tabs[i].textContent || '')
+      ) {
+        hide(tabs[i]);
       }
     }
   }
 
   /**
-   * Schedule a cleanup pass. After a navigation event, the first cleanup runs
-   * immediately (no debounce) to prevent any flash of Shorts content. Subsequent
-   * mutations during the same page are debounced to 150ms batches.
+   * Schedule a cleanup pass. First one after navigation is immediate.
    */
   function scheduleCleanup() {
     if (needsImmediateCleanup) {
@@ -273,24 +382,19 @@
   // Phase 3: SPA Navigation Handling
   // ===========================================================================
 
-  /**
-   * Re-run cleanup after YouTube SPA navigations.
-   */
   document.addEventListener('yt-navigate-finish', function () {
     var match = location.pathname.match(SHORTS_PATH_RE);
     if (match) {
       location.replace('/watch?v=' + match[1]);
       return;
     }
-    // Reset immediate flag so first cleanup after navigation has no delay
     needsImmediateCleanup = true;
     scheduleCleanup();
   });
 
   /**
    * Monkey-patch history.pushState and history.replaceState to intercept
-   * /shorts/ navigations. This is the userscript equivalent of the
-   * extension's declarativeNetRequest rules.
+   * /shorts/ navigations.
    */
   (function patchHistoryMethods() {
     var originalPushState = history.pushState.bind(history);
@@ -311,9 +415,7 @@
               parsed.searchParams.set('v', fullMatch[1]);
               return originalMethod(state, unused, parsed.toString());
             }
-          } catch (_) {
-            // Not a valid URL — pass through
-          }
+          } catch (_) {}
         }
         return originalMethod(state, unused, url);
       };
