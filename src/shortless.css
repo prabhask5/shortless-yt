@@ -166,18 +166,21 @@ ytd-reel-shelf-renderer[is-shorts] {
  * ========================================================================= */
 
 /** Item section wrapping a Shorts shelf. */
-ytd-item-section-renderer:has(ytd-reel-shelf-renderer) {
+ytd-item-section-renderer:has(ytd-reel-shelf-renderer),
+
+/** "Latest from [CHANNEL]" shelves containing Shorts reel items in search. */
+ytd-shelf-renderer:has(ytd-reel-item-renderer) {
   display: none !important;
 }
 
 /* =========================================================================
  * 10. MOBILE WEB (m.youtube.com)
- *     Mobile web uses its own `ytm-*` custom elements. We target every
- *     known variant aggressively — shelves, sections, headers, cards,
- *     navigation, and link-based catch-alls.
+ *     Mobile uses `ytm-*` custom elements. CSS ONLY hides by exact
+ *     tag name — NO :has() selectors. iOS Safari's :has() can
+ *     over-match when YouTube nests elements unexpectedly, causing
+ *     entire pages to go blank. All nuanced hiding (parent wrappers,
+ *     nav items, tabs) is handled by the JS content script instead.
  * ========================================================================= */
-
-/* ---- Mobile Shorts shelves ---- */
 
 /** Mobile Shorts shelf carousel. */
 ytm-reel-shelf-renderer,
@@ -185,50 +188,11 @@ ytm-reel-shelf-renderer,
 /** Mobile Shorts shelf variant. */
 ytm-shorts-shelf-renderer,
 
-/* ---- Mobile bottom navigation ---- */
-
-/** "Shorts" tab in the bottom navigation bar. */
-ytm-pivot-bar-item-renderer:has(.pivot-shorts),
-ytm-pivot-bar-item-renderer:has(a[href="/shorts"]),
-
-/* ---- Mobile Shorts cards ---- */
-
 /** Shorts lockup view model (v1). */
 ytm-shorts-lockup-view-model,
 
 /** Shorts lockup view model (v2 — newer variant). */
-ytm-shorts-lockup-view-model-v2,
-
-/* ---- Mobile rich items wrapping Shorts ---- */
-
-ytm-rich-item-renderer:has(ytm-shorts-lockup-view-model),
-ytm-rich-item-renderer:has(ytm-shorts-lockup-view-model-v2),
-
-/* ---- Mobile video renderers with SHORTS style ---- */
-
-ytm-video-with-context-renderer:has([data-style="SHORTS"]),
-
-/* ---- Mobile Shorts section headers ---- */
-/* IMPORTANT: Do NOT hide entire ytm-rich-section-renderer or
- * ytm-item-section-renderer containers — on mobile, YouTube often
- * puts regular videos and Shorts in the SAME section. Hiding the
- * section would nuke all regular content too. Instead, we only hide
- * the individual Shorts elements (lockups, shelves, cards) above,
- * and hide the Shorts-specific HEADER elements below so there's no
- * orphaned "Shorts" title sitting above nothing. */
-
-/** Shorts section header text elements. */
-.shortsLockupViewModelHostHeaderText,
-.reel-shelf-header,
-.shorts-shelf-header,
-
-/* ---- Mobile channel page Shorts tab ---- */
-
-ytm-tab-renderer:has(a[href*="/shorts"]),
-
-/* ---- Mobile notification items linking to /shorts/ ---- */
-
-ytm-notification-renderer:has(a[href*="/shorts/"]) {
+ytm-shorts-lockup-view-model-v2 {
   display: none !important;
 }
 

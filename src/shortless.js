@@ -142,25 +142,37 @@ function runDesktopCleanup() {
       hide(chip);
     }
   }
+
+  // "Latest from [CHANNEL]" shelves containing Shorts reel items
+  const shelves = document.querySelectorAll("ytd-shelf-renderer");
+  for (const shelf of shelves) {
+    if (shelf.querySelector("ytd-reel-item-renderer")) {
+      hide(shelf);
+    }
+  }
 }
 
 /**
  * Mobile cleanup — hides individual Shorts elements only.
- * IMPORTANT: Never hide entire section containers (ytm-rich-section-renderer,
- * ytm-item-section-renderer) because YouTube puts regular videos and Shorts
- * in the SAME section. Hiding the section nukes all regular content.
+ *
+ * IMPORTANT: Never hide containers (sections, item-sections, etc.).
+ * YouTube puts regular videos and Shorts in the same containers.
+ * Only hide individual Shorts-specific elements.
  */
 function runMobileCleanup() {
-  // Individual Shorts lockup cards — hide the card and its direct rich-item wrapper
+  // 1. Shorts lockup cards — hide the card and its direct rich-item wrapper
   const cards = document.querySelectorAll(
     "ytm-shorts-lockup-view-model, ytm-shorts-lockup-view-model-v2"
   );
   for (const card of cards) {
     hide(card);
-    hide(card.closest("ytm-rich-item-renderer"));
+    const wrapper = card.closest("ytm-rich-item-renderer");
+    if (wrapper) {
+      hide(wrapper);
+    }
   }
 
-  // Shorts shelves inside sections — hide the shelf, not the section
+  // 2. Shorts shelves — hide the shelf, not the section
   const shelves = document.querySelectorAll(
     "ytm-reel-shelf-renderer, ytm-shorts-shelf-renderer"
   );
@@ -168,40 +180,71 @@ function runMobileCleanup() {
     hide(shelf);
   }
 
-  // Shorts-styled video renderers
-  const shortsVideos = document.querySelectorAll(
-    'ytm-video-with-context-renderer:has([data-style="SHORTS"])'
-  );
-  for (const vid of shortsVideos) {
-    hide(vid);
+  // 3. Individual video renderers that are Shorts — check attribute directly
+  const videoRenderers = document.querySelectorAll("ytm-video-with-context-renderer");
+  for (const renderer of videoRenderers) {
+    if (
+      renderer.getAttribute("data-style") === "SHORTS" ||
+      renderer.querySelector(":scope > [data-style=\"SHORTS\"]")
+    ) {
+      hide(renderer);
+    }
   }
 
-  // Shorts section headers (so there's no orphaned "Shorts" title)
-  const headers = document.querySelectorAll(
-    ".shortsLockupViewModelHostHeaderText, .reel-shelf-header, .shorts-shelf-header"
+  // 4. Clean up sections that contain ONLY shorts content.
+  //    After hiding individual shorts elements, check if any section
+  //    has no remaining regular video content. If so, hide the whole section.
+  const sections = document.querySelectorAll(
+    "ytm-rich-section-renderer, ytm-item-section-renderer"
   );
-  for (const header of headers) {
-    hide(header);
+  for (const section of sections) {
+    if (section.style.display === "none") continue;
+
+    if (!section.querySelector(
+      "ytm-shorts-lockup-view-model, ytm-shorts-lockup-view-model-v2, " +
+      "ytm-reel-shelf-renderer, ytm-shorts-shelf-renderer"
+    )) {
+      continue;
+    }
+
+    const richItems = section.querySelectorAll("ytm-rich-item-renderer");
+    let hasRegularContent = false;
+    for (const item of richItems) {
+      if (!item.querySelector(
+        "ytm-shorts-lockup-view-model, ytm-shorts-lockup-view-model-v2"
+      )) {
+        hasRegularContent = true;
+        break;
+      }
+    }
+
+    if (!hasRegularContent) {
+      const videoRenderers = section.querySelectorAll("ytm-video-with-context-renderer");
+      for (const vid of videoRenderers) {
+        if (vid.getAttribute("data-style") !== "SHORTS") {
+          hasRegularContent = true;
+          break;
+        }
+      }
+    }
+
+    if (!hasRegularContent) {
+      hide(section);
+    }
   }
 
-  // Bottom nav "Shorts" tab
+  // 5. Bottom nav "Shorts" tab — match by class/href only, no text matching
   const navItems = document.querySelectorAll("ytm-pivot-bar-item-renderer");
   for (const item of navItems) {
-    if (
-      item.querySelector('.pivot-shorts, a[href="/shorts"]') ||
-      /\bShorts\b/i.test(item.textContent || "")
-    ) {
+    if (item.querySelector('.pivot-shorts, a[href="/shorts"]')) {
       hide(item);
     }
   }
 
-  // Mobile channel tabs
+  // 5. Mobile channel "Shorts" tab
   const tabs = document.querySelectorAll("ytm-tab-renderer");
   for (const tab of tabs) {
-    if (
-      tab.querySelector('a[href*="/shorts"]') ||
-      /\bShorts\b/i.test(tab.textContent || "")
-    ) {
+    if (tab.querySelector('a[href*="/shorts"]')) {
       hide(tab);
     }
   }
