@@ -67,8 +67,14 @@
       display: none !important;
     }
 
-    /* --- Shorts Filter Chips --- */
-    yt-chip-cloud-chip-renderer:has(yt-formatted-string[title="Shorts"]) {
+    /* --- Shorts Filter Chips & Search Tabs --- */
+    yt-chip-cloud-chip-renderer:has(yt-formatted-string[title="Shorts"]),
+    yt-chip-cloud-chip-renderer[chip-title="Shorts"],
+    yt-chip-cloud-chip-renderer:has(a[title="Shorts"]),
+    yt-tab-shape[tab-title="Shorts"],
+    ytd-search-filter-renderer:has(a[title="Shorts"]),
+    ytd-search-filter-renderer:has(yt-formatted-string[title="Shorts"]),
+    ytd-search-filter-group-renderer a[title="Short (<4 minutes)"] {
       display: none !important;
     }
 
@@ -142,6 +148,14 @@
 
   /** @type {number|null} */
   var cleanupTimer = null;
+
+  /**
+   * Tracks whether a cleanup pass has run since the last navigation.
+   * After a navigation, the first cleanup is immediate (no debounce) to
+   * prevent any flash of Shorts content.
+   * @type {boolean}
+   */
+  var needsImmediateCleanup = true;
 
   /** @type {number} */
   var DEBOUNCE_MS = 150;
@@ -217,9 +231,20 @@
   }
 
   /**
-   * Schedule a debounced cleanup pass.
+   * Schedule a cleanup pass. After a navigation event, the first cleanup runs
+   * immediately (no debounce) to prevent any flash of Shorts content. Subsequent
+   * mutations during the same page are debounced to 150ms batches.
    */
   function scheduleCleanup() {
+    if (needsImmediateCleanup) {
+      needsImmediateCleanup = false;
+      if (cleanupTimer !== null) {
+        clearTimeout(cleanupTimer);
+        cleanupTimer = null;
+      }
+      runCleanupPass();
+      return;
+    }
     if (cleanupTimer !== null) clearTimeout(cleanupTimer);
     cleanupTimer = setTimeout(function () {
       cleanupTimer = null;
@@ -257,6 +282,8 @@
       location.replace('/watch?v=' + match[1]);
       return;
     }
+    // Reset immediate flag so first cleanup after navigation has no delay
+    needsImmediateCleanup = true;
     scheduleCleanup();
   });
 

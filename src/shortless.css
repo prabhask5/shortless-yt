@@ -87,14 +87,43 @@ tp-yt-paper-tab:has(yt-formatted-string[title="Shorts"]) {
 }
 
 /* =========================================================================
- * 5. SHORTS FILTER CHIPS
- *    Search and explore pages show filter chips (pill buttons) at the
- *    top of results. This removes the "Shorts" chip so it cannot be
- *    used as a filter.
+ * 5. SHORTS FILTER CHIPS & SEARCH TABS
+ *    Search and explore pages show filter chips/tabs (pill buttons) at the
+ *    top of results. YouTube uses multiple element types for these depending
+ *    on A/B tests and page context. We target all known variants.
  * ========================================================================= */
 
-/** Filter chip labeled "Shorts" in the chip cloud bar. */
-yt-chip-cloud-chip-renderer:has(yt-formatted-string[title="Shorts"]) {
+/** Filter chip labeled "Shorts" in the chip cloud bar (yt-formatted-string variant). */
+yt-chip-cloud-chip-renderer:has(yt-formatted-string[title="Shorts"]),
+
+/** Filter chip with direct title attribute on the chip itself. */
+yt-chip-cloud-chip-renderer[chip-title="Shorts"],
+
+/** Filter chip matched by anchor title (some search layouts use this). */
+yt-chip-cloud-chip-renderer:has(a[title="Shorts"]),
+
+/** Search filter tab — the "Shorts" tab in the search results tab bar. */
+yt-tab-shape[tab-title="Shorts"],
+
+/**
+ * Generic catch-all: any chip whose visible text is "Shorts".
+ * Uses :has() on the inner span/text node wrapper. This covers cases where
+ * YouTube sets the text content but not a title attribute.
+ */
+yt-chip-cloud-chip-renderer:has(> yt-formatted-string:only-child),
+
+/**
+ * Search filter renderer — YouTube sometimes wraps search filter options
+ * in their own renderer element.
+ */
+ytd-search-filter-renderer:has(a[title="Shorts"]),
+ytd-search-filter-renderer:has(yt-formatted-string[title="Shorts"]),
+
+/**
+ * Search sub-menu filter — the "Type: Short" filter in search tools.
+ * Hides the entire filter group entry for Shorts.
+ */
+ytd-search-filter-group-renderer a[title="Short (<4 minutes)"] {
   display: none !important;
 }
 

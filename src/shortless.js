@@ -75,6 +75,15 @@ document.addEventListener("yt-navigate-start", (e) => {
 let cleanupTimer = null;
 
 /**
+ * Tracks whether a cleanup pass has run since the last navigation.
+ * After a navigation, the first cleanup is immediate (no debounce) to
+ * prevent any flash of Shorts content. Subsequent cleanups during the
+ * same page are debounced to 150ms.
+ * @type {boolean}
+ */
+let needsImmediateCleanup = true;
+
+/**
  * Debounce interval in milliseconds. Mutations are batched into cleanup passes
  * at most once per this interval to avoid layout thrashing on heavy page loads.
  * @type {number}
@@ -184,11 +193,21 @@ function runCleanupPass() {
 }
 
 /**
- * Schedule a debounced cleanup pass. Multiple rapid DOM mutations (e.g. during
- * initial page load) are collapsed into a single pass that runs after the
- * mutations settle, avoiding excessive reflows.
+ * Schedule a cleanup pass. After a navigation event, the first cleanup runs
+ * immediately (no debounce) to prevent any flash of Shorts content. Subsequent
+ * mutations during the same page are debounced to 150ms batches.
  */
 function scheduleCleanup() {
+  if (needsImmediateCleanup) {
+    // First cleanup after navigation — run immediately, no delay
+    needsImmediateCleanup = false;
+    if (cleanupTimer !== null) {
+      clearTimeout(cleanupTimer);
+      cleanupTimer = null;
+    }
+    runCleanupPass();
+    return;
+  }
   if (cleanupTimer !== null) {
     clearTimeout(cleanupTimer);
   }
@@ -249,6 +268,9 @@ document.addEventListener("yt-navigate-finish", () => {
     location.replace("/watch?v=" + match[1]);
     return;
   }
+  // Reset the immediate flag so the first cleanup after this navigation
+  // runs without debounce delay — prevents flash of Shorts content
+  needsImmediateCleanup = true;
   // Re-run cleanup for the newly loaded page content
   scheduleCleanup();
 });
