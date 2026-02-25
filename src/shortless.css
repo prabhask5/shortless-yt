@@ -1,7 +1,7 @@
 /**
  * shortless.css
  *
- * NUCLEAR Shorts removal stylesheet for the Shortless YouTube extension.
+ * Core stylesheet for the Shortless extension.
  * Hides ALL YouTube Shorts elements across desktop and mobile web.
  *
  * Injected at `document_start` via the extension manifest so that
@@ -10,18 +10,12 @@
  *
  * Every rule uses `display: none !important` to override YouTube's
  * inline styles and specificity.
- *
- * Strategy: we use BOTH attribute-based selectors (fast, no DOM walk)
- * and :has()-based selectors (catches elements by their children).
- * The JS content script provides an additional fallback layer for
- * anything CSS can't catch.
  */
 
 /* =========================================================================
- * 1. SHORTS SHELVES & CAROUSELS (Desktop)
- *    The primary containers YouTube uses to display Shorts collections.
- *    Targets every known variant across Home, Search, Subscriptions,
- *    Channel pages, Explore, and Trending.
+ * 1. SHORTS SHELVES & CAROUSELS
+ *    Targets the shelf/carousel containers that appear on the Home page,
+ *    Search results, Subscriptions feed, and Channel pages.
  * ========================================================================= */
 
 /** Main Shorts shelf — the primary horizontal carousel labeled "Shorts". */
@@ -30,28 +24,26 @@ ytd-reel-shelf-renderer,
 /** Alternate Shorts shelf — a variant container YouTube A/B tests. */
 ytd-rich-shelf-renderer[is-shorts],
 
-/** Grid-based Shorts display — slim grid cards used in some layouts. */
+/** Grid-based Shorts display — used in some layouts as a slim grid card. */
 ytd-rich-grid-slim-media,
 
 /** Individual Shorts card inside a shelf carousel. */
 ytd-reel-item-renderer,
 
 /** Shorts player element — the inline video player used in shelves. */
-ytd-reel-video-renderer,
-
-/** Shorts shelf with is-shorts attribute variant. */
-ytd-reel-shelf-renderer[is-shorts] {
+ytd-reel-video-renderer {
   display: none !important;
 }
 
 /* =========================================================================
- * 2. INDIVIDUAL SHORTS IN FEEDS — by overlay badge (Desktop)
+ * 2. INDIVIDUAL SHORTS IN FEEDS (by overlay badge)
  *    YouTube marks Shorts thumbnails with a special overlay badge
- *    (`overlay-style="SHORTS"`). These selectors catch any Shorts
- *    that appear as standalone items anywhere in the UI.
+ *    (`overlay-style="SHORTS"`). These selectors catch any stray Shorts
+ *    that appear as standalone items in video feeds, recommendations,
+ *    and sidebars — even outside a dedicated shelf.
  * ========================================================================= */
 
-/** Shorts in grid layouts (channel "Videos" tab, topic pages). */
+/** Shorts in grid layouts (e.g. channel "Videos" tab, topic pages). */
 ytd-grid-video-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"]),
 
 /** Shorts in rich item feeds (Home page main grid). */
@@ -66,36 +58,22 @@ ytd-compact-video-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overla
 }
 
 /* =========================================================================
- * 3. INDIVIDUAL SHORTS IN FEEDS — by /shorts/ href (Desktop)
- *    Fallback: catch video renderers whose PRIMARY link points to /shorts/.
- *    Uses direct child > selectors where possible to avoid matching
- *    a /shorts/ link buried deep in an unrelated recommendation.
- * ========================================================================= */
-
-ytd-grid-video-renderer:has(> div > a[href*="/shorts/"]),
-ytd-video-renderer:has(> .text-wrapper > a[href*="/shorts/"]),
-ytd-compact-video-renderer:has(a[href*="/shorts/"]) {
-  display: none !important;
-}
-
-/* =========================================================================
- * 4. SIDEBAR NAVIGATION (Desktop)
+ * 3. SIDEBAR NAVIGATION
  *    Removes the "Shorts" link from both the expanded left sidebar
- *    (guide) and the collapsed mini sidebar.
+ *    (guide) and the collapsed mini sidebar so users are never
+ *    tempted to navigate there.
  * ========================================================================= */
 
 /** Expanded sidebar — the full-width guide entry for "Shorts". */
 ytd-guide-entry-renderer:has(a[title="Shorts"]),
-ytd-guide-entry-renderer:has(a[href="/shorts"]),
 
 /** Collapsed sidebar — the mini icon entry for "Shorts". */
-ytd-mini-guide-entry-renderer:has(a[title="Shorts"]),
-ytd-mini-guide-entry-renderer:has(a[href="/shorts"]) {
+ytd-mini-guide-entry-renderer:has(a[title="Shorts"]) {
   display: none !important;
 }
 
 /* =========================================================================
- * 5. CHANNEL PAGE SHORTS TAB (Desktop)
+ * 4. CHANNEL PAGE SHORTS TAB
  *    Hides the "Shorts" tab on channel pages so users only see
  *    Videos, Live, Playlists, Community, etc.
  * ========================================================================= */
@@ -104,112 +82,65 @@ ytd-mini-guide-entry-renderer:has(a[href="/shorts"]) {
 yt-tab-shape[tab-title="Shorts"],
 
 /** Legacy paper tab element still used in some channel page variants. */
-tp-yt-paper-tab:has(yt-formatted-string[title="Shorts"]),
-
-/** Tab with href pointing to the channel's /shorts sub-page. */
-yt-tab-shape:has(a[href*="/shorts"]),
-tp-yt-paper-tab:has(a[href*="/shorts"]) {
+tp-yt-paper-tab:has(yt-formatted-string[title="Shorts"]) {
   display: none !important;
 }
 
 /* =========================================================================
- * 6. SHORTS FILTER CHIPS & SEARCH TABS (Desktop)
- *    Search and explore pages show filter chips/tabs at the top of
- *    results. YouTube uses multiple element types for these.
+ * 5. SHORTS FILTER CHIPS
+ *    Search and explore pages show filter chips (pill buttons) at the
+ *    top of results. This removes the "Shorts" chip so it cannot be
+ *    used as a filter.
  * ========================================================================= */
 
-/** Filter chip labeled "Shorts" — by formatted-string title. */
-yt-chip-cloud-chip-renderer:has(yt-formatted-string[title="Shorts"]),
-
-/** Filter chip — by chip-title attribute. */
-yt-chip-cloud-chip-renderer[chip-title="Shorts"],
-
-/** Filter chip — by anchor title. */
-yt-chip-cloud-chip-renderer:has(a[title="Shorts"]),
-
-/** Search filter tab — the "Shorts" tab in search results. */
-yt-tab-shape[tab-title="Shorts"],
-
-/** Search filter renderer variants. */
-ytd-search-filter-renderer:has(a[title="Shorts"]),
-ytd-search-filter-renderer:has(yt-formatted-string[title="Shorts"]),
-
-/** Search sub-menu "Type: Short" filter. */
-ytd-search-filter-group-renderer a[title="Short (<4 minutes)"] {
+/** Filter chip labeled "Shorts" in the chip cloud bar. */
+yt-chip-cloud-chip-renderer:has(yt-formatted-string[title="Shorts"]) {
   display: none !important;
 }
 
 /* =========================================================================
- * 7. NOTIFICATIONS (Desktop)
- *    Hides notification entries that link to a Shorts video.
+ * 6. NOTIFICATIONS
+ *    Hides notification entries that link to a Shorts video, identified
+ *    by the `/shorts/` path segment in the notification anchor URL.
  * ========================================================================= */
 
+/** Notification bell dropdown item linking to a Shorts video. */
 ytd-notification-renderer:has(a[href*="/shorts/"]) {
   display: none !important;
 }
 
 /* =========================================================================
- * 8. "SHORTS REMIXING THIS VIDEO" & RELATED (Desktop)
- *    On watch pages, YouTube shows shelves of Shorts that "remix"
- *    or are "related" to the current video.
+ * 7. "SHORTS REMIXING THIS VIDEO" SECTION
+ *    On regular video watch pages, YouTube sometimes shows a shelf
+ *    of Shorts that "remix" the current video. This hides that shelf.
  * ========================================================================= */
 
+/** Remix shelf — reuses reel-shelf-renderer with the is-shorts attribute. */
 ytd-reel-shelf-renderer[is-shorts] {
   display: none !important;
 }
 
 /* =========================================================================
- * 9. DESKTOP SECTION-LEVEL CATCH-ALLS
- *    Only hide sections that contain Shorts-specific shelf renderers.
- *    Do NOT use href-based catch-alls on sections — a regular video
- *    section might contain a single /shorts/ link and we'd nuke it all.
+ * 8. MOBILE WEB (m.youtube.com)
+ *    Mobile web uses its own `ytm-*` custom elements. These selectors
+ *    cover the mobile Shorts shelf, bottom-bar navigation icon, and
+ *    individual Shorts cards. Useful for the userscript variant on
+ *    iOS Safari and other mobile browsers.
  * ========================================================================= */
 
-/** Item section wrapping a Shorts shelf. */
-ytd-item-section-renderer:has(ytd-reel-shelf-renderer),
-
-/** "Latest from [CHANNEL]" shelves containing Shorts reel items in search. */
-ytd-shelf-renderer:has(ytd-reel-item-renderer) {
-  display: none !important;
-}
-
-/* =========================================================================
- * 10. MOBILE WEB (m.youtube.com)
- *     Mobile uses `ytm-*` custom elements. CSS ONLY hides by exact
- *     tag name — NO :has() selectors. iOS Safari's :has() can
- *     over-match when YouTube nests elements unexpectedly, causing
- *     entire pages to go blank. All nuanced hiding (parent wrappers,
- *     nav items, tabs) is handled by the JS content script instead.
- * ========================================================================= */
-
-/** Mobile Shorts shelf carousel. */
+/** Mobile Shorts shelf carousel on the home feed. */
 ytm-reel-shelf-renderer,
 
-/** Mobile Shorts shelf variant. */
-ytm-shorts-shelf-renderer,
+/** Mobile bottom navigation bar — the "Shorts" pivot tab icon. */
+ytm-pivot-bar-item-renderer:has(.pivot-shorts),
 
-/** Shorts lockup view model (v1). */
+/** Mobile Shorts card — the lockup view model for a single Short. */
 ytm-shorts-lockup-view-model,
 
-/** Shorts lockup view model (v2 — newer variant). */
-ytm-shorts-lockup-view-model-v2 {
-  display: none !important;
-}
+/** Mobile rich item wrapping a Shorts lockup (home/subscription feeds). */
+ytm-rich-item-renderer:has(ytm-shorts-lockup-view-model),
 
-/* =========================================================================
- * 11. SHORTS PLAYER PAGE ELEMENTS
- *     If somehow the user ends up on a /shorts/ page (before the JS
- *     redirect kicks in), hide the Shorts-specific player UI so they
- *     see a blank page rather than Shorts content.
- * ========================================================================= */
-
-/** Desktop Shorts player page. */
-ytd-shorts,
-
-/** Mobile Shorts player page. */
-ytm-shorts-player,
-
-/** Shorts engagement panel overlay. */
-ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-shorts-description"] {
+/** Mobile video renderer marked with the SHORTS data-style attribute. */
+ytm-video-with-context-renderer:has([data-style="SHORTS"]) {
   display: none !important;
 }

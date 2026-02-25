@@ -7,34 +7,43 @@
  *   2. MutationObserver-based DOM cleanup (runs when DOM is ready)
  *   3. SPA navigation interception (catches client-side route changes)
  *
- * Performance: The CSS file handles ~95% of hiding. This JS is a fallback
- * for elements CSS :has() can't catch (localized text, dynamic attributes).
- * Cleanup runs immediately after navigation, then debounces to 150ms batches.
- * Only queries the DOM for elements that CSS might miss — avoids redundant work.
+ * Injected at "document_start" so Phase 1 fires before any rendering occurs.
  */
 
 // =============================================================================
 // Phase 1: Immediate URL Redirect
 // =============================================================================
+// This block runs synchronously at document_start — before the DOM exists —
+// so the user never sees a Shorts page flash on screen.
 
 /**
- * Regex matching /shorts/VIDEO_ID paths. Captures the video ID.
+ * Regex that matches YouTube Shorts URLs and captures the video ID.
+ * Covers paths like /shorts/dQw4w9WgXcQ and /shorts/dQw4w9WgXcQ?feature=share
  * @type {RegExp}
  */
 const SHORTS_PATH_RE = /^\/shorts\/([a-zA-Z0-9_-]{11})/;
 
 /**
- * Redirect /shorts/ URLs to /watch?v= immediately at document_start.
+ * Check the current URL and redirect /shorts/VIDEO_ID to /watch?v=VIDEO_ID.
+ * Uses location.replace() so the Shorts URL does not remain in browser history.
  */
 (function immediateRedirect() {
   const match = location.pathname.match(SHORTS_PATH_RE);
   if (match) {
-    location.replace("/watch?v=" + match[1]);
+    const videoId = match[1];
+    // replace() avoids a back-button loop — the Shorts URL is removed from history
+    location.replace("/watch?v=" + videoId);
   }
 })();
 
 /**
- * Intercept YouTube SPA navigation start events for /shorts/ URLs.
+ * YouTube fires a custom `yt-navigate-start` event on the document when its
+ * SPA router begins a navigation. We intercept this to catch Shorts navigations
+ * that happen *before* the URL actually changes, giving us the earliest possible
+ * moment to redirect within the SPA lifecycle.
+ *
+ * @param {CustomEvent} e — The yt-navigate-start event. `e.detail` contains
+ *   a `url` property with the target path.
  */
 document.addEventListener("yt-navigate-start", (e) => {
   try {
@@ -42,227 +51,144 @@ document.addEventListener("yt-navigate-start", (e) => {
     if (typeof url === "string") {
       const match = url.match(SHORTS_PATH_RE);
       if (match) {
-        location.replace("/watch?v=" + match[1]);
+        const videoId = match[1];
+        // Navigate to the regular watch page instead
+        location.replace("/watch?v=" + videoId);
       }
     }
-  } catch (_) {}
+  } catch (_) {
+    // Silently ignore — defensive against unexpected event shapes
+  }
 });
 
 // =============================================================================
 // Phase 2: MutationObserver DOM Cleanup
 // =============================================================================
-// The CSS handles most hiding via attribute selectors and :has(). This JS
-// layer catches what CSS can't: text-content matching for localized "Shorts"
-// labels, and elements without reliable attributes. We keep queries minimal
-// and avoid touching elements the CSS already handles.
+// Once the DOM is available we observe it for Shorts-related elements and remove
+// them. This handles elements that the CSS `:has()` rules in shortless.css might
+// miss in older Chromium builds or when YouTube uses localized "Shorts" text.
 
-/** @type {number|null} */
+/**
+ * Debounce timer ID for batching cleanup passes.
+ * @type {number|null}
+ */
 let cleanupTimer = null;
 
-/** @type {boolean} — First cleanup after navigation runs immediately. */
-let needsImmediateCleanup = true;
-
-/** @type {number} */
+/**
+ * Debounce interval in milliseconds. Mutations are batched into cleanup passes
+ * at most once per this interval to avoid layout thrashing on heavy page loads.
+ * @type {number}
+ */
 const DEBOUNCE_MS = 150;
 
 /**
- * Detect if we're on mobile YouTube (m.youtube.com).
- * Cached once to avoid repeated hostname checks.
- * @type {boolean}
- */
-const isMobile = location.hostname === "m.youtube.com";
-
-/**
- * Hide an element. No-ops if already hidden or null.
- * @param {HTMLElement|null} el
- */
-function hide(el) {
-  if (el && el.style.display !== "none") {
-    el.style.display = "none";
-  }
-}
-
-/**
- * Run cleanup. Only queries for elements that CSS :has() might miss:
- * - Text-content based matching (for localized "Shorts" labels)
- * - Overlay badge matching (fallback for browsers without :has())
- * - Mobile section containers with Shorts content
+ * Run a single cleanup pass over the current DOM, removing or hiding any
+ * Shorts-related elements that CSS alone cannot reliably target.
  *
- * Splits into desktop vs mobile paths to avoid unnecessary DOM queries.
+ * Targets include:
+ *   - Shorts in the "Up next" sidebar (compact video renderers with Shorts overlay)
+ *   - Sidebar navigation entries containing "Shorts" text
+ *   - Channel page tab strip entries for Shorts
+ *   - Shorts filter/chip buttons
+ *   - Notification menu items linking to /shorts/
  */
 function runCleanupPass() {
-  isRunningCleanup = true;
-  try {
-    if (isMobile) {
-      runMobileCleanup();
-    } else {
-      runDesktopCleanup();
-    }
-  } finally {
-    isRunningCleanup = false;
-  }
-}
-
-/**
- * Desktop cleanup — targets elements CSS can't reliably catch.
- */
-function runDesktopCleanup() {
-  // Shorts by overlay badge — fallback for browsers without :has()
-  const overlays = document.querySelectorAll('[overlay-style="SHORTS"]');
-  for (const overlay of overlays) {
-    hide(overlay.closest(
-      "ytd-compact-video-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-rich-item-renderer"
-    ));
-  }
-
-  // Sidebar "Shorts" entries — text match catches localized labels
-  const guideEntries = document.querySelectorAll(
-    "ytd-guide-entry-renderer, ytd-mini-guide-entry-renderer"
+  // ---- Shorts in "Up next" sidebar ----
+  // YouTube marks Shorts with an overlay badge inside compact renderers.
+  // The overlay element has `[overlay-style="SHORTS"]` or contains "SHORTS" text.
+  /** @type {NodeListOf<HTMLElement>} */
+  const compactRenderers = document.querySelectorAll(
+    'ytd-compact-video-renderer [overlay-style="SHORTS"]'
   );
-  for (const entry of guideEntries) {
-    if (/\bShorts\b/i.test(entry.textContent || "")) {
-      hide(entry);
+  for (const overlay of compactRenderers) {
+    // Walk up to the renderer root and hide the entire card
+    const renderer = overlay.closest("ytd-compact-video-renderer");
+    if (renderer) {
+      renderer.style.display = "none";
     }
   }
 
-  // Channel tabs & search tabs — text match for "Shorts"
+  // ---- Sidebar navigation "Shorts" entry ----
+  // The guide (left sidebar) has <ytd-guide-entry-renderer> items. We look for
+  // ones whose text content includes "Shorts". This is a fallback for browsers
+  // or locales where the CSS :has() selector is insufficient.
+  /** @type {NodeListOf<HTMLElement>} */
+  const guideEntries = document.querySelectorAll("ytd-guide-entry-renderer");
+  for (const entry of guideEntries) {
+    const title = entry.querySelector("yt-formatted-string");
+    if (title && /\bShorts\b/i.test(title.textContent || "")) {
+      entry.style.display = "none";
+    }
+  }
+
+  // Also handle the mini-guide (collapsed sidebar) entries
+  /** @type {NodeListOf<HTMLElement>} */
+  const miniGuideEntries = document.querySelectorAll(
+    "ytd-mini-guide-entry-renderer"
+  );
+  for (const entry of miniGuideEntries) {
+    const label = entry.querySelector(".yt-spec-button-shape-next--button-text-content, .title");
+    if (label && /\bShorts\b/i.test(label.textContent || "")) {
+      entry.style.display = "none";
+    }
+  }
+
+  // ---- Channel tab strip Shorts tab ----
+  // On channel pages, tabs are rendered inside <yt-tab-shape> or
+  // <tp-yt-paper-tab> elements. Hide the one labelled "Shorts".
+  /** @type {NodeListOf<HTMLElement>} */
   const tabs = document.querySelectorAll(
-    "yt-tab-shape, tp-yt-paper-tab"
+    "yt-tab-shape, tp-yt-paper-tab, yt-tab-group-shape [role='tab']"
   );
   for (const tab of tabs) {
     if (/\bShorts\b/i.test(tab.textContent || "")) {
-      hide(tab);
+      tab.style.display = "none";
     }
   }
 
-  // Filter chips — text match for "Shorts"
-  const chips = document.querySelectorAll("yt-chip-cloud-chip-renderer");
+  // ---- Shorts filter chips ----
+  // The chip bar on search results / home feed uses <yt-chip-cloud-chip-renderer>.
+  /** @type {NodeListOf<HTMLElement>} */
+  const chips = document.querySelectorAll(
+    "yt-chip-cloud-chip-renderer, ytd-search-filter-renderer"
+  );
   for (const chip of chips) {
     if (/\bShorts\b/i.test(chip.textContent || "")) {
-      hide(chip);
+      chip.style.display = "none";
     }
   }
 
-  // "Latest from [CHANNEL]" shelves containing Shorts reel items
-  const shelves = document.querySelectorAll("ytd-shelf-renderer");
-  for (const shelf of shelves) {
-    if (shelf.querySelector("ytd-reel-item-renderer")) {
-      hide(shelf);
+  // ---- Notification dropdown items linking to /shorts/ ----
+  // Notification entries contain anchor tags; hide any that point to /shorts/.
+  /** @type {NodeListOf<HTMLElement>} */
+  const notificationItems = document.querySelectorAll(
+    "ytd-notification-renderer"
+  );
+  for (const item of notificationItems) {
+    const anchor = item.querySelector("a[href*='/shorts/']");
+    if (anchor) {
+      item.style.display = "none";
     }
+  }
+
+  // ---- Shorts shelves on the home feed ----
+  // YouTube renders entire Shorts shelves as <ytd-rich-shelf-renderer> or
+  // <ytd-reel-shelf-renderer>. Hide the whole shelf.
+  /** @type {NodeListOf<HTMLElement>} */
+  const shortsShelves = document.querySelectorAll(
+    "ytd-reel-shelf-renderer, ytd-rich-shelf-renderer[is-shorts]"
+  );
+  for (const shelf of shortsShelves) {
+    shelf.style.display = "none";
   }
 }
 
 /**
- * Mobile cleanup — hides individual Shorts elements only.
- *
- * IMPORTANT: Never hide containers (sections, item-sections, etc.).
- * YouTube puts regular videos and Shorts in the same containers.
- * Only hide individual Shorts-specific elements.
- */
-function runMobileCleanup() {
-  // 1. Shorts lockup cards — hide the card and its direct rich-item wrapper
-  const cards = document.querySelectorAll(
-    "ytm-shorts-lockup-view-model, ytm-shorts-lockup-view-model-v2"
-  );
-  for (const card of cards) {
-    hide(card);
-    const wrapper = card.closest("ytm-rich-item-renderer");
-    if (wrapper) {
-      hide(wrapper);
-    }
-  }
-
-  // 2. Shorts shelves — hide the shelf, not the section
-  const shelves = document.querySelectorAll(
-    "ytm-reel-shelf-renderer, ytm-shorts-shelf-renderer"
-  );
-  for (const shelf of shelves) {
-    hide(shelf);
-  }
-
-  // 3. Individual video renderers that are Shorts — check attribute directly
-  const videoRenderers = document.querySelectorAll("ytm-video-with-context-renderer");
-  for (const renderer of videoRenderers) {
-    if (
-      renderer.getAttribute("data-style") === "SHORTS" ||
-      renderer.querySelector(":scope > [data-style=\"SHORTS\"]")
-    ) {
-      hide(renderer);
-    }
-  }
-
-  // 4. Clean up sections that contain ONLY shorts content.
-  //    After hiding individual shorts elements, check if any section
-  //    has no remaining regular video content. If so, hide the whole section.
-  const sections = document.querySelectorAll(
-    "ytm-rich-section-renderer, ytm-item-section-renderer"
-  );
-  for (const section of sections) {
-    if (section.style.display === "none") continue;
-
-    if (!section.querySelector(
-      "ytm-shorts-lockup-view-model, ytm-shorts-lockup-view-model-v2, " +
-      "ytm-reel-shelf-renderer, ytm-shorts-shelf-renderer"
-    )) {
-      continue;
-    }
-
-    const richItems = section.querySelectorAll("ytm-rich-item-renderer");
-    let hasRegularContent = false;
-    for (const item of richItems) {
-      if (!item.querySelector(
-        "ytm-shorts-lockup-view-model, ytm-shorts-lockup-view-model-v2"
-      )) {
-        hasRegularContent = true;
-        break;
-      }
-    }
-
-    if (!hasRegularContent) {
-      const videoRenderers = section.querySelectorAll("ytm-video-with-context-renderer");
-      for (const vid of videoRenderers) {
-        if (vid.getAttribute("data-style") !== "SHORTS") {
-          hasRegularContent = true;
-          break;
-        }
-      }
-    }
-
-    if (!hasRegularContent) {
-      hide(section);
-    }
-  }
-
-  // 5. Bottom nav "Shorts" tab — match by class/href only, no text matching
-  const navItems = document.querySelectorAll("ytm-pivot-bar-item-renderer");
-  for (const item of navItems) {
-    if (item.querySelector('.pivot-shorts, a[href="/shorts"]')) {
-      hide(item);
-    }
-  }
-
-  // 5. Mobile channel "Shorts" tab
-  const tabs = document.querySelectorAll("ytm-tab-renderer");
-  for (const tab of tabs) {
-    if (tab.querySelector('a[href*="/shorts"]')) {
-      hide(tab);
-    }
-  }
-}
-
-/**
- * Schedule cleanup. Immediate on first call after navigation, then debounced.
+ * Schedule a debounced cleanup pass. Multiple rapid DOM mutations (e.g. during
+ * initial page load) are collapsed into a single pass that runs after the
+ * mutations settle, avoiding excessive reflows.
  */
 function scheduleCleanup() {
-  if (needsImmediateCleanup) {
-    needsImmediateCleanup = false;
-    if (cleanupTimer !== null) {
-      clearTimeout(cleanupTimer);
-      cleanupTimer = null;
-    }
-    runCleanupPass();
-    return;
-  }
   if (cleanupTimer !== null) {
     clearTimeout(cleanupTimer);
   }
@@ -272,20 +198,16 @@ function scheduleCleanup() {
   }, DEBOUNCE_MS);
 }
 
-/** @type {MutationObserver|null} */
-let observer = null;
-
-/** @type {boolean} — Prevents our own DOM changes from re-triggering cleanup. */
-let isRunningCleanup = false;
-
 /**
- * Start the MutationObserver when DOM is ready.
+ * Initialise the MutationObserver once the DOM is interactive.
+ * We observe the entire document tree for child-list changes so we catch
+ * dynamically loaded Shorts content (infinite scroll, navigation, etc.).
  */
 function initObserver() {
-  observer = new MutationObserver(() => {
-    if (!isRunningCleanup) {
-      scheduleCleanup();
-    }
+  const observer = new MutationObserver((mutations) => {
+    // We don't inspect individual mutations — any DOM change could introduce
+    // Shorts content, so we just schedule a full cleanup pass.
+    scheduleCleanup();
   });
 
   observer.observe(document.documentElement, {
@@ -293,43 +215,72 @@ function initObserver() {
     subtree: true,
   });
 
+  // Run one immediate cleanup for any Shorts content already in the DOM
   runCleanupPass();
 }
 
+// Wait for the DOM to be ready. Since this script runs at document_start,
+// the DOM may not exist yet.
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", initObserver, { once: true });
 } else {
+  // DOM is already interactive or complete
   initObserver();
 }
 
 // =============================================================================
 // Phase 3: SPA Navigation Handling
 // =============================================================================
+// YouTube is a single-page application — full page loads are rare after the
+// initial visit. We need to handle two SPA navigation vectors:
+//   A. YouTube's own `yt-navigate-finish` custom event (fires after SPA nav)
+//   B. Monkey-patched history.pushState / replaceState to intercept /shorts/
+//      navigations that bypass YouTube's custom events
 
+/**
+ * After a YouTube SPA navigation completes, check the new URL and re-run
+ * cleanup. The `yt-navigate-finish` event fires after the new page content
+ * has been inserted into the DOM.
+ */
 document.addEventListener("yt-navigate-finish", () => {
+  // Check if we somehow ended up on a Shorts page despite Phase 1
   const match = location.pathname.match(SHORTS_PATH_RE);
   if (match) {
     location.replace("/watch?v=" + match[1]);
     return;
   }
-  needsImmediateCleanup = true;
+  // Re-run cleanup for the newly loaded page content
   scheduleCleanup();
 });
 
 /**
- * Monkey-patch history methods to intercept /shorts/ navigations.
+ * Monkey-patch history.pushState and history.replaceState to intercept any
+ * programmatic navigation to /shorts/ URLs. This is a safety net that catches
+ * navigations which might not fire YouTube's custom events.
+ *
+ * We store references to the original methods and wrap them with a check.
  */
 (function patchHistoryMethods() {
   const originalPushState = history.pushState.bind(history);
   const originalReplaceState = history.replaceState.bind(history);
 
-  function createPatchedMethod(originalMethod) {
+  /**
+   * Create a wrapped version of a history method that intercepts /shorts/ URLs.
+   *
+   * @param {typeof history.pushState} originalMethod — The original history method
+   * @param {string} methodName — "pushState" or "replaceState" (for debugging)
+   * @returns {typeof history.pushState} — The wrapped method
+   */
+  function createPatchedMethod(originalMethod, methodName) {
     return function patchedHistoryMethod(state, unused, url) {
       if (typeof url === "string") {
         const match = url.match(SHORTS_PATH_RE);
         if (match) {
-          return originalMethod(state, unused, "/watch?v=" + match[1]);
+          // Rewrite the URL to /watch?v=VIDEO_ID before it hits the history API
+          const rewritten = "/watch?v=" + match[1];
+          return originalMethod(state, unused, rewritten);
         }
+        // Also handle full URLs (https://www.youtube.com/shorts/...)
         try {
           const parsed = new URL(url, location.origin);
           const fullMatch = parsed.pathname.match(SHORTS_PATH_RE);
@@ -338,12 +289,18 @@ document.addEventListener("yt-navigate-finish", () => {
             parsed.searchParams.set("v", fullMatch[1]);
             return originalMethod(state, unused, parsed.toString());
           }
-        } catch (_) {}
+        } catch (_) {
+          // Not a valid URL — pass through
+        }
       }
+      // No Shorts URL detected — call the original method unchanged
       return originalMethod(state, unused, url);
     };
   }
 
-  history.pushState = createPatchedMethod(originalPushState);
-  history.replaceState = createPatchedMethod(originalReplaceState);
+  history.pushState = createPatchedMethod(originalPushState, "pushState");
+  history.replaceState = createPatchedMethod(
+    originalReplaceState,
+    "replaceState"
+  );
 })();

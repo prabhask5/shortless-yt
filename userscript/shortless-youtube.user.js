@@ -20,12 +20,7 @@
  *   - iOS Safari via the Userscripts app (https://apps.apple.com/us/app/userscripts/id1463298887)
  *   - Desktop browsers via Tampermonkey, Violentmonkey, or Greasemonkey
  *
- * MOBILE CSS STRATEGY: On mobile, CSS only hides elements by their exact
- * custom-element tag name (ytm-shorts-*, ytm-reel-*). NO :has() selectors
- * are used for mobile because iOS Safari's :has() can over-match when
- * YouTube nests elements unexpectedly, hiding entire pages of content.
- * All nuanced mobile hiding (parent wrappers, text-based matches) is
- * handled by the JS MutationObserver instead.
+ * Combines CSS injection and JavaScript DOM manipulation in a single file.
  */
 (function () {
   'use strict';
@@ -33,90 +28,72 @@
   // ===========================================================================
   // CSS Injection
   // ===========================================================================
+  // Inject hiding styles immediately at document-start so Shorts elements are
+  // hidden before the first paint. We append to documentElement since <head>
+  // may not exist yet.
 
   /**
-   * CSS rules that hide known YouTube Shorts elements.
-   *
-   * DESKTOP: Uses :has() selectors freely — Chrome/Firefox handle them well.
-   * MOBILE:  Tag-name selectors ONLY — no :has(), no class selectors.
-   *          JS handles everything else to avoid over-hiding.
-   *
+   * Comprehensive CSS rules that hide all known YouTube Shorts elements.
+   * Covers both desktop (ytd-*) and mobile (ytm-*) custom elements.
    * @type {string}
    */
-  var SHORTLESS_CSS = [
-    '/* === Desktop: Shorts shelves & carousels === */',
-    'ytd-reel-shelf-renderer,',
-    'ytd-rich-shelf-renderer[is-shorts],',
-    'ytd-rich-grid-slim-media,',
-    'ytd-reel-item-renderer,',
-    'ytd-reel-video-renderer,',
-    'ytd-reel-shelf-renderer[is-shorts]',
-    '{ display: none !important; }',
+  const SHORTLESS_CSS = `
+    /* --- Shorts Shelves & Carousels --- */
+    ytd-reel-shelf-renderer,
+    ytd-rich-shelf-renderer[is-shorts],
+    ytd-rich-grid-slim-media,
+    ytd-reel-item-renderer,
+    ytd-reel-video-renderer {
+      display: none !important;
+    }
 
-    '/* === Desktop: Shorts in feeds by overlay badge === */',
-    'ytd-grid-video-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"]),',
-    'ytd-rich-item-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"]),',
-    'ytd-video-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"]),',
-    'ytd-compact-video-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"])',
-    '{ display: none !important; }',
+    /* --- Individual Shorts in Feeds (by overlay badge) --- */
+    ytd-grid-video-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"]),
+    ytd-rich-item-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"]),
+    ytd-video-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"]),
+    ytd-compact-video-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"]) {
+      display: none !important;
+    }
 
-    '/* === Desktop: Shorts in feeds by /shorts/ href === */',
-    'ytd-grid-video-renderer:has(> div > a[href*="/shorts/"]),',
-    'ytd-video-renderer:has(> .text-wrapper > a[href*="/shorts/"]),',
-    'ytd-compact-video-renderer:has(a[href*="/shorts/"])',
-    '{ display: none !important; }',
+    /* --- Sidebar Navigation --- */
+    ytd-guide-entry-renderer:has(a[title="Shorts"]),
+    ytd-mini-guide-entry-renderer:has(a[title="Shorts"]) {
+      display: none !important;
+    }
 
-    '/* === Desktop: Sidebar navigation === */',
-    'ytd-guide-entry-renderer:has(a[title="Shorts"]),',
-    'ytd-guide-entry-renderer:has(a[href="/shorts"]),',
-    'ytd-mini-guide-entry-renderer:has(a[title="Shorts"]),',
-    'ytd-mini-guide-entry-renderer:has(a[href="/shorts"])',
-    '{ display: none !important; }',
+    /* --- Channel Page Shorts Tab --- */
+    yt-tab-shape[tab-title="Shorts"],
+    tp-yt-paper-tab:has(yt-formatted-string[title="Shorts"]) {
+      display: none !important;
+    }
 
-    '/* === Desktop: Channel page Shorts tab === */',
-    'yt-tab-shape[tab-title="Shorts"],',
-    'tp-yt-paper-tab:has(yt-formatted-string[title="Shorts"]),',
-    'yt-tab-shape:has(a[href*="/shorts"]),',
-    'tp-yt-paper-tab:has(a[href*="/shorts"])',
-    '{ display: none !important; }',
+    /* --- Shorts Filter Chips --- */
+    yt-chip-cloud-chip-renderer:has(yt-formatted-string[title="Shorts"]) {
+      display: none !important;
+    }
 
-    '/* === Desktop: Search filter chips & tabs === */',
-    'yt-chip-cloud-chip-renderer:has(yt-formatted-string[title="Shorts"]),',
-    'yt-chip-cloud-chip-renderer[chip-title="Shorts"],',
-    'yt-chip-cloud-chip-renderer:has(a[title="Shorts"]),',
-    'yt-tab-shape[tab-title="Shorts"],',
-    'ytd-search-filter-renderer:has(a[title="Shorts"]),',
-    'ytd-search-filter-renderer:has(yt-formatted-string[title="Shorts"]),',
-    'ytd-search-filter-group-renderer a[title="Short (<4 minutes)"]',
-    '{ display: none !important; }',
+    /* --- Notifications --- */
+    ytd-notification-renderer:has(a[href*="/shorts/"]) {
+      display: none !important;
+    }
 
-    '/* === Desktop: Notifications === */',
-    'ytd-notification-renderer:has(a[href*="/shorts/"])',
-    '{ display: none !important; }',
+    /* --- "Shorts remixing this video" section --- */
+    ytd-reel-shelf-renderer[is-shorts] {
+      display: none !important;
+    }
 
-    '/* === Desktop: Sections/shelves containing Shorts === */',
-    'ytd-item-section-renderer:has(ytd-reel-shelf-renderer),',
-    'ytd-shelf-renderer:has(ytd-reel-item-renderer)',
-    '{ display: none !important; }',
-
-    '/* === Desktop: Shorts player page === */',
-    'ytd-shorts,',
-    'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-shorts-description"]',
-    '{ display: none !important; }',
-
-    '/* === Mobile: Shorts-specific elements (tag-name only, NO :has()) === */',
-    '/* These custom elements are used EXCLUSIVELY for Shorts content. */',
-    '/* Hiding by tag name is 100% safe — they never contain regular videos. */',
-    'ytm-reel-shelf-renderer,',
-    'ytm-shorts-shelf-renderer,',
-    'ytm-shorts-lockup-view-model,',
-    'ytm-shorts-lockup-view-model-v2,',
-    'ytm-shorts-player',
-    '{ display: none !important; }',
-  ].join('\n');
+    /* --- Mobile Web (m.youtube.com) --- */
+    ytm-reel-shelf-renderer,
+    ytm-pivot-bar-item-renderer:has(.pivot-shorts),
+    ytm-shorts-lockup-view-model,
+    ytm-rich-item-renderer:has(ytm-shorts-lockup-view-model),
+    ytm-video-with-context-renderer:has([data-style="SHORTS"]) {
+      display: none !important;
+    }
+  `;
 
   /** @type {HTMLStyleElement} */
-  var style = document.createElement('style');
+  const style = document.createElement('style');
   style.textContent = SHORTLESS_CSS;
   (document.documentElement || document).appendChild(style);
 
@@ -124,16 +101,27 @@
   // Phase 1: Immediate URL Redirect
   // ===========================================================================
 
-  /** @type {RegExp} */
-  var SHORTS_PATH_RE = /^\/shorts\/([a-zA-Z0-9_-]{11})/;
+  /**
+   * Regex matching /shorts/VIDEO_ID paths and capturing the 11-char video ID.
+   * @type {RegExp}
+   */
+  const SHORTS_PATH_RE = /^\/shorts\/([a-zA-Z0-9_-]{11})/;
 
+  /**
+   * Redirect /shorts/VIDEO_ID to /watch?v=VIDEO_ID immediately.
+   * Uses location.replace() to avoid polluting browser history.
+   */
   (function immediateRedirect() {
-    var match = location.pathname.match(SHORTS_PATH_RE);
+    const match = location.pathname.match(SHORTS_PATH_RE);
     if (match) {
       location.replace('/watch?v=' + match[1]);
     }
   })();
 
+  /**
+   * Intercept YouTube's SPA navigation start event to catch /shorts/ navigations
+   * before the URL changes.
+   */
   document.addEventListener('yt-navigate-start', function (e) {
     try {
       var url = e.detail && e.detail.url;
@@ -143,7 +131,9 @@
           location.replace('/watch?v=' + match[1]);
         }
       }
-    } catch (_) {}
+    } catch (_) {
+      // Silently ignore unexpected event shapes
+    }
   });
 
   // ===========================================================================
@@ -153,213 +143,83 @@
   /** @type {number|null} */
   var cleanupTimer = null;
 
-  /** @type {boolean} */
-  var needsImmediateCleanup = true;
-
   /** @type {number} */
   var DEBOUNCE_MS = 150;
 
-  /** @type {boolean} */
-  var isMobile = location.hostname === 'm.youtube.com';
-
-  /** @type {boolean} — Prevents our own DOM changes from re-triggering the observer. */
-  var isRunningCleanup = false;
-
   /**
-   * Hide an element. No-ops if already hidden or null.
-   * @param {HTMLElement|null} el
-   */
-  function hide(el) {
-    if (el && el.style.display !== 'none') {
-      el.style.display = 'none';
-    }
-  }
-
-  /**
-   * Run cleanup — only queries elements relevant to the current platform.
+   * Run a cleanup pass removing Shorts elements that CSS :has() might miss
+   * in older browsers or with localized text.
    */
   function runCleanupPass() {
-    isRunningCleanup = true;
-    try {
-      if (isMobile) {
-        runMobileCleanup();
-      } else {
-        runDesktopCleanup();
-      }
-    } finally {
-      isRunningCleanup = false;
-    }
-  }
-
-  /** Desktop-only cleanup. */
-  function runDesktopCleanup() {
-    // Overlay badge fallback (for browsers without :has())
-    var overlays = document.querySelectorAll('[overlay-style="SHORTS"]');
-    for (var i = 0; i < overlays.length; i++) {
-      hide(overlays[i].closest(
-        'ytd-compact-video-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-rich-item-renderer'
-      ));
-    }
-
-    // Sidebar "Shorts" entries — text match for localized labels
-    var guideEntries = document.querySelectorAll(
-      'ytd-guide-entry-renderer, ytd-mini-guide-entry-renderer'
+    // Shorts in "Up next" sidebar
+    var overlays = document.querySelectorAll(
+      'ytd-compact-video-renderer [overlay-style="SHORTS"]'
     );
+    for (var i = 0; i < overlays.length; i++) {
+      var renderer = overlays[i].closest('ytd-compact-video-renderer');
+      if (renderer) renderer.style.display = 'none';
+    }
+
+    // Sidebar navigation "Shorts" entries
+    var guideEntries = document.querySelectorAll('ytd-guide-entry-renderer');
     for (var i = 0; i < guideEntries.length; i++) {
-      if (/\bShorts\b/i.test(guideEntries[i].textContent || '')) {
-        hide(guideEntries[i]);
+      var title = guideEntries[i].querySelector('yt-formatted-string');
+      if (title && /\bShorts\b/i.test(title.textContent || '')) {
+        guideEntries[i].style.display = 'none';
       }
     }
 
-    // Channel tabs & search tabs — text match
-    var tabs = document.querySelectorAll('yt-tab-shape, tp-yt-paper-tab');
+    var miniEntries = document.querySelectorAll('ytd-mini-guide-entry-renderer');
+    for (var i = 0; i < miniEntries.length; i++) {
+      var label = miniEntries[i].querySelector('.yt-spec-button-shape-next--button-text-content, .title');
+      if (label && /\bShorts\b/i.test(label.textContent || '')) {
+        miniEntries[i].style.display = 'none';
+      }
+    }
+
+    // Channel tab strip
+    var tabs = document.querySelectorAll("yt-tab-shape, tp-yt-paper-tab, yt-tab-group-shape [role='tab']");
     for (var i = 0; i < tabs.length; i++) {
       if (/\bShorts\b/i.test(tabs[i].textContent || '')) {
-        hide(tabs[i]);
+        tabs[i].style.display = 'none';
       }
     }
 
-    // Filter chips — text match
+    // Filter chips
     var chips = document.querySelectorAll('yt-chip-cloud-chip-renderer');
     for (var i = 0; i < chips.length; i++) {
       if (/\bShorts\b/i.test(chips[i].textContent || '')) {
-        hide(chips[i]);
+        chips[i].style.display = 'none';
       }
     }
 
-    // "Latest from [CHANNEL]" shelves containing Shorts reel items
-    var shelves = document.querySelectorAll('ytd-shelf-renderer');
+    // Notifications
+    var notifications = document.querySelectorAll('ytd-notification-renderer');
+    for (var i = 0; i < notifications.length; i++) {
+      if (notifications[i].querySelector("a[href*='/shorts/']")) {
+        notifications[i].style.display = 'none';
+      }
+    }
+
+    // Shorts shelves
+    var shelves = document.querySelectorAll('ytd-reel-shelf-renderer, ytd-rich-shelf-renderer[is-shorts]');
     for (var i = 0; i < shelves.length; i++) {
-      if (shelves[i].querySelector('ytd-reel-item-renderer')) {
-        hide(shelves[i]);
+      shelves[i].style.display = 'none';
+    }
+
+    // Mobile: Shorts nav item (text-based fallback)
+    var mobileNavItems = document.querySelectorAll('ytm-pivot-bar-item-renderer');
+    for (var i = 0; i < mobileNavItems.length; i++) {
+      if (mobileNavItems[i].querySelector('.pivot-shorts') || /\bShorts\b/i.test(mobileNavItems[i].textContent || '')) {
+        mobileNavItems[i].style.display = 'none';
       }
     }
   }
 
   /**
-   * Mobile-only cleanup.
-   *
-   * IMPORTANT: Never hide containers (sections, item-sections, etc.).
-   * YouTube puts regular videos and Shorts in the same containers.
-   * Only hide individual Shorts-specific elements.
-   */
-  function runMobileCleanup() {
-    // 1. Hide Shorts lockup cards (already hidden by CSS tag-name, but
-    //    also hide their parent ytm-rich-item-renderer wrapper via JS)
-    var cards = document.querySelectorAll(
-      'ytm-shorts-lockup-view-model, ytm-shorts-lockup-view-model-v2'
-    );
-    for (var i = 0; i < cards.length; i++) {
-      hide(cards[i]);
-      // Only hide the IMMEDIATE rich-item wrapper, not any higher container
-      var wrapper = cards[i].closest('ytm-rich-item-renderer');
-      if (wrapper) {
-        hide(wrapper);
-      }
-    }
-
-    // 2. Hide Shorts shelves (already hidden by CSS, JS fallback)
-    var shelves = document.querySelectorAll(
-      'ytm-reel-shelf-renderer, ytm-shorts-shelf-renderer'
-    );
-    for (var i = 0; i < shelves.length; i++) {
-      hide(shelves[i]);
-    }
-
-    // 3. Hide individual video renderers that are Shorts.
-    //    Check for [data-style="SHORTS"] on the renderer itself or
-    //    on a direct child — NOT using :has() to avoid over-matching.
-    var videoRenderers = document.querySelectorAll('ytm-video-with-context-renderer');
-    for (var i = 0; i < videoRenderers.length; i++) {
-      var renderer = videoRenderers[i];
-      // Check if THIS renderer or its children have data-style="SHORTS"
-      if (
-        renderer.getAttribute('data-style') === 'SHORTS' ||
-        renderer.querySelector(':scope > [data-style="SHORTS"]')
-      ) {
-        hide(renderer);
-      }
-    }
-
-    // 4. Clean up sections that contain ONLY shorts content.
-    //    After hiding individual shorts elements above, check if any section
-    //    has no remaining regular video content. If so, the section was
-    //    exclusively shorts (e.g. "Latest from [CHANNEL]" with shorts logo)
-    //    and the whole section should be hidden — including its header.
-    var sections = document.querySelectorAll(
-      'ytm-rich-section-renderer, ytm-item-section-renderer'
-    );
-    for (var s = 0; s < sections.length; s++) {
-      var section = sections[s];
-      if (section.style.display === 'none') continue;
-
-      // Only consider sections that actually contain shorts-specific elements
-      if (!section.querySelector(
-        'ytm-shorts-lockup-view-model, ytm-shorts-lockup-view-model-v2, ' +
-        'ytm-reel-shelf-renderer, ytm-shorts-shelf-renderer'
-      )) {
-        continue;
-      }
-
-      // Check if any rich-item in this section contains regular (non-shorts) content
-      var richItems = section.querySelectorAll('ytm-rich-item-renderer');
-      var hasRegularContent = false;
-      for (var r = 0; r < richItems.length; r++) {
-        if (!richItems[r].querySelector(
-          'ytm-shorts-lockup-view-model, ytm-shorts-lockup-view-model-v2'
-        )) {
-          hasRegularContent = true;
-          break;
-        }
-      }
-
-      // Also check for regular video renderers not styled as SHORTS
-      if (!hasRegularContent) {
-        var videoRenderers = section.querySelectorAll('ytm-video-with-context-renderer');
-        for (var v = 0; v < videoRenderers.length; v++) {
-          if (videoRenderers[v].getAttribute('data-style') !== 'SHORTS') {
-            hasRegularContent = true;
-            break;
-          }
-        }
-      }
-
-      // Section has ONLY shorts content → safe to hide entirely
-      if (!hasRegularContent) {
-        hide(section);
-      }
-    }
-
-    // 5. Bottom nav "Shorts" tab — hide only the Shorts pivot item
-    var navItems = document.querySelectorAll('ytm-pivot-bar-item-renderer');
-    for (var i = 0; i < navItems.length; i++) {
-      if (navItems[i].querySelector('.pivot-shorts, a[href="/shorts"]')) {
-        hide(navItems[i]);
-      }
-    }
-
-    // 5. Mobile channel "Shorts" tab
-    var tabs = document.querySelectorAll('ytm-tab-renderer');
-    for (var i = 0; i < tabs.length; i++) {
-      if (tabs[i].querySelector('a[href*="/shorts"]')) {
-        hide(tabs[i]);
-      }
-    }
-  }
-
-  /**
-   * Schedule a cleanup pass. First one after navigation is immediate.
+   * Schedule a debounced cleanup pass.
    */
   function scheduleCleanup() {
-    if (needsImmediateCleanup) {
-      needsImmediateCleanup = false;
-      if (cleanupTimer !== null) {
-        clearTimeout(cleanupTimer);
-        cleanupTimer = null;
-      }
-      runCleanupPass();
-      return;
-    }
     if (cleanupTimer !== null) clearTimeout(cleanupTimer);
     cleanupTimer = setTimeout(function () {
       cleanupTimer = null;
@@ -372,9 +232,7 @@
    */
   function initObserver() {
     var observer = new MutationObserver(function () {
-      if (!isRunningCleanup) {
-        scheduleCleanup();
-      }
+      scheduleCleanup();
     });
     observer.observe(document.documentElement, { childList: true, subtree: true });
     runCleanupPass();
@@ -390,16 +248,23 @@
   // Phase 3: SPA Navigation Handling
   // ===========================================================================
 
+  /**
+   * Re-run cleanup after YouTube SPA navigations.
+   */
   document.addEventListener('yt-navigate-finish', function () {
     var match = location.pathname.match(SHORTS_PATH_RE);
     if (match) {
       location.replace('/watch?v=' + match[1]);
       return;
     }
-    needsImmediateCleanup = true;
     scheduleCleanup();
   });
 
+  /**
+   * Monkey-patch history.pushState and history.replaceState to intercept
+   * /shorts/ navigations. This is the userscript equivalent of the
+   * extension's declarativeNetRequest rules.
+   */
   (function patchHistoryMethods() {
     var originalPushState = history.pushState.bind(history);
     var originalReplaceState = history.replaceState.bind(history);
@@ -419,7 +284,9 @@
               parsed.searchParams.set('v', fullMatch[1]);
               return originalMethod(state, unused, parsed.toString());
             }
-          } catch (_) {}
+          } catch (_) {
+            // Not a valid URL — pass through
+          }
         }
         return originalMethod(state, unused, url);
       };
