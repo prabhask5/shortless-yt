@@ -55,6 +55,14 @@
       display: none !important;
     }
 
+    /* --- Individual Shorts detected by /shorts/ link href --- */
+    ytd-grid-video-renderer:has(a[href*="/shorts/"]),
+    ytd-rich-item-renderer:has(a[href*="/shorts/"]),
+    ytd-video-renderer:has(a[href*="/shorts/"]),
+    ytd-compact-video-renderer:has(a[href*="/shorts/"]) {
+      display: none !important;
+    }
+
     /* --- Sidebar Navigation --- */
     ytd-guide-entry-renderer:has(a[title="Shorts"]),
     ytd-mini-guide-entry-renderer:has(a[title="Shorts"]) {
@@ -87,7 +95,10 @@
     ytm-pivot-bar-item-renderer:has(.pivot-shorts),
     ytm-shorts-lockup-view-model,
     ytm-rich-item-renderer:has(ytm-shorts-lockup-view-model),
-    ytm-video-with-context-renderer:has([data-style="SHORTS"]) {
+    ytm-video-with-context-renderer:has([data-style="SHORTS"]),
+    ytm-video-with-context-renderer:has(a[href*="/shorts/"]),
+    ytm-media-item:has(a[href*="/shorts/"]),
+    ytm-compact-video-renderer:has(a[href*="/shorts/"]) {
       display: none !important;
     }
   `;
@@ -199,6 +210,15 @@
       if (notifications[i].querySelector("a[href*='/shorts/']")) {
         notifications[i].style.display = 'none';
       }
+    }
+
+    // Individual Shorts detected by /shorts/ link href (history, feeds, etc.)
+    var shortsLinks = document.querySelectorAll(
+      "ytd-video-renderer a[href*='/shorts/'], ytd-grid-video-renderer a[href*='/shorts/'], ytd-rich-item-renderer a[href*='/shorts/'], ytd-compact-video-renderer a[href*='/shorts/'], ytm-video-with-context-renderer a[href*='/shorts/'], ytm-media-item a[href*='/shorts/'], ytm-compact-video-renderer a[href*='/shorts/']"
+    );
+    for (var i = 0; i < shortsLinks.length; i++) {
+      var renderer = shortsLinks[i].closest('ytd-video-renderer, ytd-grid-video-renderer, ytd-rich-item-renderer, ytd-compact-video-renderer, ytm-video-with-context-renderer, ytm-media-item, ytm-compact-video-renderer');
+      if (renderer) renderer.style.display = 'none';
     }
 
     // Shorts shelves

@@ -53,7 +53,13 @@ ytd-rich-item-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overlay-st
 ytd-video-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"]),
 
 /** Shorts in compact video lists (watch-next sidebar, end screens). */
-ytd-compact-video-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"]) {
+ytd-compact-video-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"]),
+
+/** Shorts detected by /shorts/ link href (catches all Shorts regardless of overlay). */
+ytd-grid-video-renderer:has(a[href*="/shorts/"]),
+ytd-rich-item-renderer:has(a[href*="/shorts/"]),
+ytd-video-renderer:has(a[href*="/shorts/"]),
+ytd-compact-video-renderer:has(a[href*="/shorts/"]) {
   display: none !important;
 }
 
@@ -159,6 +165,11 @@ ytm-shorts-lockup-view-model,
 ytm-rich-item-renderer:has(ytm-shorts-lockup-view-model),
 
 /** Mobile video renderer marked with the SHORTS data-style attribute. */
-ytm-video-with-context-renderer:has([data-style="SHORTS"]) {
+ytm-video-with-context-renderer:has([data-style="SHORTS"]),
+
+/** Mobile Shorts detected by /shorts/ link href (history, feeds, etc.). */
+ytm-video-with-context-renderer:has(a[href*="/shorts/"]),
+ytm-media-item:has(a[href*="/shorts/"]),
+ytm-compact-video-renderer:has(a[href*="/shorts/"]) {
   display: none !important;
 }

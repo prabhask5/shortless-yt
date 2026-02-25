@@ -176,6 +176,22 @@ function runCleanupPass() {
     }
   }
 
+  // ---- Individual Shorts detected by /shorts/ link href ----
+  // Catches any video item linking to /shorts/ regardless of overlay badge.
+  // Works on history, feeds, recommendations, etc.
+  /** @type {NodeListOf<HTMLElement>} */
+  const shortsLinks = document.querySelectorAll(
+    "ytd-video-renderer a[href*='/shorts/'], ytd-grid-video-renderer a[href*='/shorts/'], ytd-rich-item-renderer a[href*='/shorts/'], ytd-compact-video-renderer a[href*='/shorts/']"
+  );
+  for (const link of shortsLinks) {
+    const renderer = link.closest(
+      "ytd-video-renderer, ytd-grid-video-renderer, ytd-rich-item-renderer, ytd-compact-video-renderer"
+    );
+    if (renderer) {
+      renderer.style.display = "none";
+    }
+  }
+
   // ---- Shorts shelves on the home feed ----
   // YouTube renders entire Shorts shelves as <ytd-rich-shelf-renderer> or
   // <ytd-reel-shelf-renderer>. Hide the whole shelf.
