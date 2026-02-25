@@ -207,6 +207,23 @@
       shelves[i].style.display = 'none';
     }
 
+    // Mobile: Shorts shelf section (header + triple-dot menu)
+    // The shelf itself (ytm-reel-shelf-renderer) is hidden by CSS, but
+    // the parent section still shows the "Shorts" header. Hide the
+    // parent section ONLY if it contains no regular video content.
+    var reelShelves = document.querySelectorAll('ytm-reel-shelf-renderer');
+    for (var i = 0; i < reelShelves.length; i++) {
+      var parentSection = reelShelves[i].closest('ytm-rich-section-renderer, ytm-item-section-renderer');
+      if (!parentSection) continue;
+      // Safety: check the section has no regular videos before hiding
+      var hasRegularVideos = parentSection.querySelector(
+        'ytm-video-with-context-renderer, ytm-compact-video-renderer, ytm-media-item'
+      );
+      if (!hasRegularVideos) {
+        parentSection.style.display = 'none';
+      }
+    }
+
     // Mobile: Shorts nav item (text-based fallback)
     var mobileNavItems = document.querySelectorAll('ytm-pivot-bar-item-renderer');
     for (var i = 0; i < mobileNavItems.length; i++) {
