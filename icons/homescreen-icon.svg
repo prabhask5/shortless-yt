@@ -1,6 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" width="180" height="180">
   <!-- Solid red background (iOS rounds the corners automatically) -->
   <rect width="180" height="180" fill="#FF0000"/>
-  <!-- White play triangle, centered -->
-  <polygon points="68,45 68,135 138,90" fill="#FFFFFF"/>
+  <!-- White play triangle, optically centered (shifted right to account for visual weight) -->
+  <!-- Play triangle: 63px wide, 90px tall, equal 58.5px padding on each side vertically and horizontally -->
+  <!-- Left edge at x=58, right tip at x=122 → left spacing=58, right spacing=58 -->
+  <!-- Top at y=45, bottom at y=135 → top spacing=45, bottom spacing=45 -->
+  <polygon points="63,45 63,135 127,90" fill="#FFFFFF"/>
 </svg>
