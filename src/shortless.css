@@ -67,13 +67,13 @@ ytd-compact-video-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overla
 
 /* =========================================================================
  * 3. INDIVIDUAL SHORTS IN FEEDS — by /shorts/ href (Desktop)
- *    Fallback: catch any video renderer whose link points to /shorts/.
- *    This catches Shorts even if YouTube changes the overlay badge system.
+ *    Fallback: catch video renderers whose PRIMARY link points to /shorts/.
+ *    Uses direct child > selectors where possible to avoid matching
+ *    a /shorts/ link buried deep in an unrelated recommendation.
  * ========================================================================= */
 
-ytd-grid-video-renderer:has(a[href*="/shorts/"]),
-ytd-rich-item-renderer:has(a[href*="/shorts/"]),
-ytd-video-renderer:has(a[href*="/shorts/"]),
+ytd-grid-video-renderer:has(> div > a[href*="/shorts/"]),
+ytd-video-renderer:has(> .text-wrapper > a[href*="/shorts/"]),
 ytd-compact-video-renderer:has(a[href*="/shorts/"]) {
   display: none !important;
 }
@@ -159,16 +159,13 @@ ytd-reel-shelf-renderer[is-shorts] {
 }
 
 /* =========================================================================
- * 9. ANY ELEMENT LINKING TO /shorts/ (Desktop catch-all)
- *    Nuclear fallback: hide any remaining renderers that contain
- *    an anchor pointing to /shorts/. This catches future YouTube
- *    changes that introduce new renderer element names.
+ * 9. DESKTOP SECTION-LEVEL CATCH-ALLS
+ *    Only hide sections that contain Shorts-specific shelf renderers.
+ *    Do NOT use href-based catch-alls on sections — a regular video
+ *    section might contain a single /shorts/ link and we'd nuke it all.
  * ========================================================================= */
 
-/** Rich section containing a /shorts/ link. */
-ytd-rich-section-renderer:has(a[href*="/shorts/"]),
-
-/** Item section containing a /shorts/ link. */
+/** Item section wrapping a Shorts shelf. */
 ytd-item-section-renderer:has(ytd-reel-shelf-renderer) {
   display: none !important;
 }
@@ -206,24 +203,23 @@ ytm-shorts-lockup-view-model-v2,
 
 ytm-rich-item-renderer:has(ytm-shorts-lockup-view-model),
 ytm-rich-item-renderer:has(ytm-shorts-lockup-view-model-v2),
-ytm-rich-item-renderer:has(a[href*="/shorts/"]),
 
 /* ---- Mobile video renderers with SHORTS style ---- */
 
 ytm-video-with-context-renderer:has([data-style="SHORTS"]),
-ytm-video-with-context-renderer:has(a[href*="/shorts/"]),
 
 /* ---- Mobile Shorts sections (header + shelf container) ---- */
 /* These are the parent sections that contain the "Shorts" subheader
- * (icon + title + three-dot "show fewer shorts" menu) and the shelf. */
+ * (icon + title + three-dot "show fewer shorts" menu) and the shelf.
+ * IMPORTANT: Only match sections by Shorts-specific child elements,
+ * NOT by href catch-alls — a mixed section with one /shorts/ link
+ * would incorrectly hide all its regular video content too. */
 
-/** Rich section containing Shorts lockup models. */
+/** Rich section containing Shorts-specific lockup/shelf elements. */
 ytm-rich-section-renderer:has(ytm-shorts-lockup-view-model),
 ytm-rich-section-renderer:has(ytm-shorts-lockup-view-model-v2),
 ytm-rich-section-renderer:has(ytm-reel-shelf-renderer),
 ytm-rich-section-renderer:has(ytm-shorts-shelf-renderer),
-ytm-rich-section-renderer:has([data-style="SHORTS"]),
-ytm-rich-section-renderer:has(a[href*="/shorts/"]),
 
 /** Rich section matched by header text/class. */
 ytm-rich-section-renderer:has(span[title="Shorts"]),
@@ -231,17 +227,11 @@ ytm-rich-section-renderer:has(.shortsLockupViewModelHostHeaderText),
 ytm-rich-section-renderer:has(.reel-shelf-header),
 ytm-rich-section-renderer:has(.shorts-shelf-header),
 
-/** Item section containing Shorts shelves. */
+/** Item section containing Shorts-specific shelf renderers. */
 ytm-item-section-renderer:has(ytm-reel-shelf-renderer),
 ytm-item-section-renderer:has(ytm-shorts-lockup-view-model),
 ytm-item-section-renderer:has(ytm-shorts-lockup-view-model-v2),
 ytm-item-section-renderer:has(ytm-shorts-shelf-renderer),
-ytm-item-section-renderer:has(a[href*="/shorts/"]),
-
-/* ---- Mobile media items linking to /shorts/ ---- */
-
-ytm-media-item:has(a[href*="/shorts/"]),
-ytm-compact-video-renderer:has(a[href*="/shorts/"]),
 
 /* ---- Mobile channel page Shorts tab ---- */
 

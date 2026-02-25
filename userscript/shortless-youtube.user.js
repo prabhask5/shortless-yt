@@ -58,9 +58,8 @@
     '{ display: none !important; }',
 
     '/* === Desktop: Shorts in feeds by /shorts/ href === */',
-    'ytd-grid-video-renderer:has(a[href*="/shorts/"]),',
-    'ytd-rich-item-renderer:has(a[href*="/shorts/"]),',
-    'ytd-video-renderer:has(a[href*="/shorts/"]),',
+    'ytd-grid-video-renderer:has(> div > a[href*="/shorts/"]),',
+    'ytd-video-renderer:has(> .text-wrapper > a[href*="/shorts/"]),',
     'ytd-compact-video-renderer:has(a[href*="/shorts/"])',
     '{ display: none !important; }',
 
@@ -92,8 +91,7 @@
     'ytd-notification-renderer:has(a[href*="/shorts/"])',
     '{ display: none !important; }',
 
-    '/* === Desktop: Sections containing /shorts/ links === */',
-    'ytd-rich-section-renderer:has(a[href*="/shorts/"]),',
+    '/* === Desktop: Sections containing Shorts shelves === */',
     'ytd-item-section-renderer:has(ytd-reel-shelf-renderer)',
     '{ display: none !important; }',
 
@@ -119,13 +117,11 @@
 
     '/* === Mobile: Rich items wrapping Shorts === */',
     'ytm-rich-item-renderer:has(ytm-shorts-lockup-view-model),',
-    'ytm-rich-item-renderer:has(ytm-shorts-lockup-view-model-v2),',
-    'ytm-rich-item-renderer:has(a[href*="/shorts/"])',
+    'ytm-rich-item-renderer:has(ytm-shorts-lockup-view-model-v2)',
     '{ display: none !important; }',
 
     '/* === Mobile: Video renderers with SHORTS style === */',
-    'ytm-video-with-context-renderer:has([data-style="SHORTS"]),',
-    'ytm-video-with-context-renderer:has(a[href*="/shorts/"])',
+    'ytm-video-with-context-renderer:has([data-style="SHORTS"])',
     '{ display: none !important; }',
 
     '/* === Mobile: Shorts sections (header + shelf + three-dot menu) === */',
@@ -133,25 +129,20 @@
     'ytm-rich-section-renderer:has(ytm-shorts-lockup-view-model-v2),',
     'ytm-rich-section-renderer:has(ytm-reel-shelf-renderer),',
     'ytm-rich-section-renderer:has(ytm-shorts-shelf-renderer),',
-    'ytm-rich-section-renderer:has([data-style="SHORTS"]),',
-    'ytm-rich-section-renderer:has(a[href*="/shorts/"]),',
     'ytm-rich-section-renderer:has(span[title="Shorts"]),',
     'ytm-rich-section-renderer:has(.shortsLockupViewModelHostHeaderText),',
     'ytm-rich-section-renderer:has(.reel-shelf-header),',
     'ytm-rich-section-renderer:has(.shorts-shelf-header)',
     '{ display: none !important; }',
 
-    '/* === Mobile: Item sections containing Shorts === */',
+    '/* === Mobile: Item sections containing Shorts shelves === */',
     'ytm-item-section-renderer:has(ytm-reel-shelf-renderer),',
     'ytm-item-section-renderer:has(ytm-shorts-lockup-view-model),',
     'ytm-item-section-renderer:has(ytm-shorts-lockup-view-model-v2),',
-    'ytm-item-section-renderer:has(ytm-shorts-shelf-renderer),',
-    'ytm-item-section-renderer:has(a[href*="/shorts/"])',
+    'ytm-item-section-renderer:has(ytm-shorts-shelf-renderer)',
     '{ display: none !important; }',
 
-    '/* === Mobile: Stray media items linking to /shorts/ === */',
-    'ytm-media-item:has(a[href*="/shorts/"]),',
-    'ytm-compact-video-renderer:has(a[href*="/shorts/"]),',
+    '/* === Mobile: Channel tab, notifications === */',
     'ytm-tab-renderer:has(a[href*="/shorts"]),',
     'ytm-notification-renderer:has(a[href*="/shorts/"])',
     '{ display: none !important; }',
