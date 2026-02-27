@@ -18,13 +18,14 @@
 	import CategoryChips from '$lib/components/CategoryChips.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import PullToRefresh from '$lib/components/PullToRefresh.svelte';
-	import { invalidateAll } from '$app/navigation';
+	import { invalidateAll, goto } from '$app/navigation';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 
-	// '0' maps to the synthetic "All" category chip prepended in the template
-	let selectedCategory = $state('0');
+	let selectedCategory = $derived(
+		'selectedCategory' in data ? (data.selectedCategory as string) : '0'
+	);
 
 	let columns = $state(1);
 
@@ -44,9 +45,12 @@
 		return () => window.removeEventListener('resize', updateColumns);
 	});
 
-	async function handleCategoryChange(categoryId: string) {
-		selectedCategory = categoryId;
-		// Category filtering happens via re-fetch - for now show all trending
+	function handleCategoryChange(categoryId: string) {
+		if (categoryId === '0') {
+			goto('/');
+		} else {
+			goto(`/?category=${categoryId}`);
+		}
 	}
 </script>
 

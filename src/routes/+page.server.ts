@@ -28,8 +28,14 @@ const emptyVideos: PaginatedResult<VideoItem> = {
 	pageInfo: { totalResults: 0 }
 };
 
-export const load: PageServerLoad = async ({ locals }) => {
-	console.log('[HOME PAGE] Loading home page, authenticated:', !!locals.session);
+export const load: PageServerLoad = async ({ locals, url }) => {
+	const categoryId = url.searchParams.get('category') || undefined;
+	console.log(
+		'[HOME PAGE] Loading home page, authenticated:',
+		!!locals.session,
+		'category:',
+		categoryId ?? 'all'
+	);
 
 	if (locals.session) {
 		console.log(
@@ -71,7 +77,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 	console.log('[HOME PAGE] Anonymous path — fetching trending + categories in parallel');
 	const [trending, categories] = await Promise.all([
-		getTrending().catch((err) => {
+		getTrending(categoryId).catch((err) => {
 			console.error('[HOME PAGE] getTrending FAILED (anon path):', err);
 			return emptyVideos;
 		}),
@@ -101,6 +107,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		authenticated: false as const,
 		trending: filteredTrending,
 		categories,
+		selectedCategory: categoryId ?? '0',
 		nextPageToken: trending.pageInfo.nextPageToken
 	};
 };
