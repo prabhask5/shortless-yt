@@ -44,8 +44,7 @@ const BASE_URL = 'https://www.googleapis.com/youtube/v3';
 // Cache TTL constants
 // ===================================================================
 
-const FIVE_MINUTES = 5 * 60 * 1000;
-const FIFTEEN_MINUTES = 15 * 60 * 1000;
+const THIRTY_MINUTES = 30 * 60 * 1000;
 const ONE_HOUR = 60 * 60 * 1000;
 const ONE_DAY = 24 * 60 * 60 * 1000;
 
@@ -266,7 +265,7 @@ export async function searchVideos(
 		}
 	};
 
-	publicCache.set(cacheKey, result, FIVE_MINUTES);
+	publicCache.set(cacheKey, result, THIRTY_MINUTES);
 	return result;
 }
 
@@ -313,7 +312,7 @@ export async function searchChannels(
 		}
 	};
 
-	publicCache.set(cacheKey, result, FIVE_MINUTES);
+	publicCache.set(cacheKey, result, THIRTY_MINUTES);
 	return result;
 }
 
@@ -373,7 +372,7 @@ export async function searchPlaylists(
 		}
 	};
 
-	publicCache.set(cacheKey, result, FIVE_MINUTES);
+	publicCache.set(cacheKey, result, THIRTY_MINUTES);
 	return result;
 }
 
@@ -501,7 +500,7 @@ export async function searchMixed(
 	}
 
 	const result = { results, nextPageToken: nextToken };
-	publicCache.set(cacheKey, result, FIVE_MINUTES);
+	publicCache.set(cacheKey, result, THIRTY_MINUTES);
 	return result;
 }
 
@@ -560,7 +559,7 @@ export async function getVideoDetails(ids: string[]): Promise<VideoItem[]> {
 		/* Cache each video individually so future requests for any subset
 		 * of these IDs will hit the per-ID cache. */
 		for (const video of videos) {
-			publicCache.set(`video:${video.id}`, video, FIFTEEN_MINUTES);
+			publicCache.set(`video:${video.id}`, video, ONE_HOUR);
 		}
 		results.push(...videos);
 	}
@@ -665,7 +664,7 @@ export async function getPlaylistDetails(ids: string[]): Promise<PlaylistItem[]>
 		console.log(`[YOUTUBE] getPlaylistDetails batch returned ${playlists.length} playlists`);
 
 		for (const pl of playlists) {
-			publicCache.set(`playlist:${pl.id}`, pl, FIFTEEN_MINUTES);
+			publicCache.set(`playlist:${pl.id}`, pl, ONE_HOUR);
 		}
 		results.push(...playlists);
 	}
@@ -751,7 +750,7 @@ export async function getChannelVideos(
 		}
 	};
 
-	publicCache.set(cacheKey, result, FIVE_MINUTES);
+	publicCache.set(cacheKey, result, THIRTY_MINUTES);
 	return result;
 }
 
@@ -807,7 +806,7 @@ export async function getTrending(
 		}
 	};
 
-	publicCache.set(cacheKey, result, FIVE_MINUTES);
+	publicCache.set(cacheKey, result, THIRTY_MINUTES);
 	return result;
 }
 
@@ -898,7 +897,7 @@ export async function getComments(
 		}
 	};
 
-	publicCache.set(cacheKey, result, FIVE_MINUTES);
+	publicCache.set(cacheKey, result, THIRTY_MINUTES);
 	return result;
 }
 
@@ -960,7 +959,7 @@ export async function getCommentReplies(
 		}
 	};
 
-	publicCache.set(cacheKey, result, FIVE_MINUTES);
+	publicCache.set(cacheKey, result, THIRTY_MINUTES);
 	return result;
 }
 
@@ -986,12 +985,12 @@ export async function getPlaylist(playlistId: string): Promise<PlaylistItem | nu
 
 	const items = (data.items as Record<string, unknown>[]) ?? [];
 	if (items.length === 0) {
-		publicCache.set(cacheKey, null, FIVE_MINUTES);
+		publicCache.set(cacheKey, null, THIRTY_MINUTES);
 		return null;
 	}
 
 	const playlist = parsePlaylistItem(items[0]);
-	publicCache.set(cacheKey, playlist, FIFTEEN_MINUTES);
+	publicCache.set(cacheKey, playlist, ONE_HOUR);
 	return playlist;
 }
 
@@ -1042,7 +1041,7 @@ export async function getPlaylistVideos(
 		}
 	};
 
-	publicCache.set(cacheKey, result, FIVE_MINUTES);
+	publicCache.set(cacheKey, result, THIRTY_MINUTES);
 	return result;
 }
 
@@ -1112,7 +1111,7 @@ export async function getSubscriptions(
 		}
 	};
 
-	userCache.set(cacheKey, result, FIVE_MINUTES);
+	userCache.set(cacheKey, result, THIRTY_MINUTES);
 	return result;
 }
 
@@ -1149,7 +1148,7 @@ export async function checkSubscription(accessToken: string, channelId: string):
 		const items = (data.items as unknown[]) ?? [];
 		const isSubscribed = items.length > 0;
 		console.log(`[YOUTUBE] checkSubscription for ${channelId}: ${isSubscribed}`);
-		userCache.set(cacheKey, isSubscribed, FIVE_MINUTES);
+		userCache.set(cacheKey, isSubscribed, THIRTY_MINUTES);
 		return isSubscribed;
 	} catch (err) {
 		console.warn(`[YOUTUBE] checkSubscription FAILED for ${channelId}:`, err);
@@ -1196,7 +1195,7 @@ export async function getLikedVideos(
 		}
 	};
 
-	userCache.set(cacheKey, result, FIVE_MINUTES);
+	userCache.set(cacheKey, result, THIRTY_MINUTES);
 	return result;
 }
 
@@ -1239,7 +1238,7 @@ export async function getUserPlaylists(
 		}
 	};
 
-	userCache.set(cacheKey, result, FIVE_MINUTES);
+	userCache.set(cacheKey, result, THIRTY_MINUTES);
 	return result;
 }
 
@@ -1330,7 +1329,7 @@ export async function getSubscriptionFeed(accessToken: string): Promise<VideoIte
 	videos.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
 
 	console.log(`[YOUTUBE] getSubscriptionFeed — ${videos.length} videos after details fetch`);
-	userCache.set(cacheKey, videos, FIVE_MINUTES);
+	userCache.set(cacheKey, videos, THIRTY_MINUTES);
 	return videos;
 }
 
@@ -1376,7 +1375,7 @@ export async function getUserProfile(
 		};
 
 		console.log('[YOUTUBE] getUserProfile SUCCESS:', profile.channelTitle);
-		userCache.set(cacheKey, profile, FIVE_MINUTES);
+		userCache.set(cacheKey, profile, THIRTY_MINUTES);
 		return profile;
 	} catch (err) {
 		console.error('[YOUTUBE] getUserProfile FAILED:', err);
@@ -1435,7 +1434,7 @@ export async function getAutocompleteSuggestions(query: string): Promise<string[
 		console.log(
 			`[YOUTUBE] getAutocompleteSuggestions for "${query}" returned ${suggestions.length} suggestions`
 		);
-		publicCache.set(cacheKey, suggestions, FIVE_MINUTES);
+		publicCache.set(cacheKey, suggestions, THIRTY_MINUTES);
 		return suggestions;
 	} catch (err) {
 		console.warn(`[YOUTUBE] getAutocompleteSuggestions FAILED for "${query}":`, err);

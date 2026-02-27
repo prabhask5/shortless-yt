@@ -24,7 +24,12 @@
  */
 
 import type { Handle } from '@sveltejs/kit';
-import { decryptSession, SESSION_COOKIE_NAME } from '$lib/server/auth';
+import {
+	decryptSession,
+	encryptSession,
+	refreshAccessToken,
+	SESSION_COOKIE_NAME
+} from '$lib/server/auth';
 
 // ===================================================================
 // Rate limiting
@@ -178,20 +183,52 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 	/* ── Session hydration ──────────────────────────────────────────────
 	 * Decrypt the session cookie and attach to locals so downstream handlers
-	 * can access the user's tokens without re-parsing. */
+	 * can access the user's tokens without re-parsing.
+	 * If the access token has expired, silently refresh it using the refresh
+	 * token and update the cookie so subsequent requests use the fresh token. */
 	if (cookie) {
-		const session = decryptSession(cookie);
+		let session = decryptSession(cookie);
 
 		if (session) {
 			const isExpired = Date.now() > session.expiresAt;
 			console.log(
 				`[HOOKS] Session valid, accessToken ends: ...${session.accessToken.slice(-6)}, expired: ${isExpired}, expiresAt: ${new Date(session.expiresAt).toISOString()}`
 			);
-			event.locals.session = {
-				accessToken: session.accessToken,
-				refreshToken: session.refreshToken,
-				expiresAt: session.expiresAt
-			};
+
+			if (isExpired && session.refreshToken) {
+				try {
+					console.log('[HOOKS] Access token expired, refreshing...');
+					const refreshed = await refreshAccessToken(session.refreshToken);
+					session = {
+						...session,
+						accessToken: refreshed.access_token,
+						expiresAt: Date.now() + refreshed.expires_in * 1000
+					};
+					/* Write the updated session cookie so the browser stores the fresh token */
+					event.cookies.set(SESSION_COOKIE_NAME, encryptSession(session), {
+						path: '/',
+						httpOnly: true,
+						secure: true,
+						sameSite: 'lax',
+						maxAge: 60 * 60 * 24 * 30 // 30 days
+					});
+					console.log(
+						`[HOOKS] Token refreshed successfully, new token ends: ...${session.accessToken.slice(-6)}, expiresAt: ${new Date(session.expiresAt).toISOString()}`
+					);
+				} catch (err) {
+					console.error('[HOOKS] Token refresh FAILED, clearing session:', err);
+					event.locals.session = null;
+					event.cookies.delete(SESSION_COOKIE_NAME, { path: '/' });
+				}
+			}
+
+			if (session) {
+				event.locals.session = {
+					accessToken: session.accessToken,
+					refreshToken: session.refreshToken,
+					expiresAt: session.expiresAt
+				};
+			}
 		} else {
 			console.warn(
 				`[HOOKS] Session cookie INVALID (decryption failed or structural validation failed) — deleting cookie`

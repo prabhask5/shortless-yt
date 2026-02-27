@@ -103,10 +103,10 @@
 			/>
 		</div>
 
-		<!-- Related videos sidebar -->
+		<!-- More from this channel -->
 		{#if data.relatedVideos && data.relatedVideos.length > 0}
 			<aside class="flex flex-col gap-3">
-				<h2 class="text-yt-text text-base font-medium">Related videos</h2>
+				<h2 class="text-yt-text text-base font-medium">More from this channel</h2>
 				{#each data.relatedVideos.slice(0, 15) as video (video.id)}
 					<VideoCard {video} layout="horizontal" />
 				{/each}
