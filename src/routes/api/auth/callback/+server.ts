@@ -2,11 +2,12 @@
  * @fileoverview OAuth callback endpoint — handles the redirect from Google after consent.
  *
  * Flow:
- * 1. Google redirects back here with a `code` query parameter (or `error` if denied).
- * 2. We exchange the authorization code for access + refresh tokens via `exchangeCode`.
- * 3. The tokens are encrypted into a single session cookie so that subsequent
+ * 1. Verify the `state` query parameter matches the state cookie (CSRF protection).
+ * 2. Google redirects back here with a `code` query parameter (or `error` if denied).
+ * 3. We exchange the authorization code for access + refresh tokens via `exchangeCode`.
+ * 4. The tokens are encrypted into a single session cookie so that subsequent
  *    server-side loads can make authenticated YouTube API calls.
- * 4. The user is redirected to the home page with their session now active.
+ * 5. The user is redirected to the home page with their session now active.
  *
  * Cookie security settings:
  * - `httpOnly`: prevents client-side JS from reading the token (XSS mitigation)
@@ -17,12 +18,43 @@
  */
 import { redirect, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { exchangeCode, encryptSession, SESSION_COOKIE_NAME } from '$lib/server/auth';
+import {
+	exchangeCode,
+	encryptSession,
+	SESSION_COOKIE_NAME,
+	STATE_COOKIE_NAME
+} from '$lib/server/auth';
 import { PUBLIC_APP_URL } from '$lib/server/env';
 
 export const GET: RequestHandler = async ({ url, cookies }) => {
 	console.log('[AUTH CALLBACK] Received callback request, URL:', url.toString());
 
+	/* ── CSRF state verification ────────────────────────────────────────── */
+	const stateParam = url.searchParams.get('state');
+	const stateCookie = cookies.get(STATE_COOKIE_NAME);
+
+	console.log(
+		'[AUTH CALLBACK] State check — param present:',
+		!!stateParam,
+		'cookie present:',
+		!!stateCookie
+	);
+
+	if (!stateParam || !stateCookie || stateParam !== stateCookie) {
+		console.error(
+			'[AUTH CALLBACK] OAuth state mismatch — possible CSRF attack. param:',
+			stateParam?.slice(0, 8) ?? 'null',
+			'cookie:',
+			stateCookie?.slice(0, 8) ?? 'null'
+		);
+		throw error(403, 'Invalid OAuth state — please try signing in again');
+	}
+
+	/* State verified — clean up the one-time state cookie */
+	cookies.delete(STATE_COOKIE_NAME, { path: '/' });
+	console.log('[AUTH CALLBACK] OAuth state verified and state cookie deleted');
+
+	/* ── Error handling ─────────────────────────────────────────────────── */
 	const code = url.searchParams.get('code');
 	if (!code) {
 		console.error('[AUTH CALLBACK] Missing authorization code in callback URL');
@@ -36,6 +68,7 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
 		throw error(400, `OAuth error: ${errorParam}`);
 	}
 
+	/* ── Token exchange ─────────────────────────────────────────────────── */
 	console.log('[AUTH CALLBACK] Exchanging authorization code for tokens...');
 
 	let tokens: { access_token: string; refresh_token: string; expires_in: number };
@@ -60,8 +93,8 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
 		expiresAt: Date.now() + tokens.expires_in * 1000
 	};
 
-	/* Encrypt the session before storing in a cookie so tokens are not
-	 * exposed in plaintext, even though the cookie is httpOnly. */
+	/* Encrypt the session with AES-256-GCM before storing in a cookie so tokens
+	 * are not exposed, even though the cookie is httpOnly. */
 	const encrypted = encryptSession(session);
 
 	/* BUG FIX: secure flag must be dynamic — on localhost (HTTP) the browser

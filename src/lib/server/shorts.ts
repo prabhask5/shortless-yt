@@ -20,17 +20,79 @@
  * redirects away from the /shorts/ URL). This is the most reliable detection
  * method available without an official API flag.
  *
- * Results are permanently cached per video ID because a video's Short status
- * never changes after upload.
+ * **Fail-safe behavior:**
+ * The primary purpose of this application is to remove all Shorts. On HEAD
+ * probe timeout or network failure, we treat the video as a Short (remove it)
+ * rather than risk showing a Short to the user. Failed probes are NOT cached
+ * so they'll be retried on the next request — if the video is a regular video,
+ * it will be shown once the probe succeeds.
+ *
+ * **Cache bounding:**
+ * Results are cached per video ID because a video's Short status never changes
+ * after upload. The cache is capped at {@link SHORTS_CACHE_MAX_SIZE} entries
+ * with FIFO eviction to prevent unbounded memory growth on long-running servers.
  */
 
 import type { VideoItem } from '$lib/types.js';
 
-/** Permanent cache for shorts detection results (videoId -> isShort). */
+/**
+ * Maximum number of entries in the shorts detection cache.
+ * At ~50 bytes per entry (11-char videoId key + boolean value + Map overhead),
+ * 50,000 entries consume roughly 2.5 MB — well within serverless limits.
+ */
+const SHORTS_CACHE_MAX_SIZE = 50_000;
+
+/**
+ * Timeout in milliseconds for each HEAD probe request.
+ * 3 seconds is generous for a HEAD-only request. If YouTube is slower than
+ * this, we treat the video as a Short (fail-safe) and don't cache the result
+ * so it can be retried on the next page load.
+ */
+const HEAD_PROBE_TIMEOUT_MS = 3_000;
+
+/**
+ * Permanent cache for shorts detection results (videoId -> isShort).
+ *
+ * Uses a plain Map with FIFO eviction when the size limit is reached.
+ * Map insertion order is guaranteed in JavaScript, so iterating from the
+ * beginning gives us the oldest entries for eviction.
+ */
 const shortsCache = new Map<string, boolean>();
 
 /**
+ * Store a shorts detection result in the cache, evicting the oldest 10%
+ * of entries if the cache has reached its maximum size.
+ *
+ * Eviction is done in bulk (10% at a time) rather than one-at-a-time to
+ * amortize the cost — a single eviction pass handles the next ~5,000
+ * insertions without needing to evict again.
+ *
+ * @param videoId - The YouTube video ID.
+ * @param value   - Whether the video is a Short.
+ */
+function shortsCacheSet(videoId: string, value: boolean): void {
+	if (shortsCache.size >= SHORTS_CACHE_MAX_SIZE) {
+		const toDelete = Math.floor(SHORTS_CACHE_MAX_SIZE * 0.1);
+		const iterator = shortsCache.keys();
+		for (let i = 0; i < toDelete; i++) {
+			const key = iterator.next().value;
+			if (key !== undefined) shortsCache.delete(key);
+		}
+		console.log(
+			`[SHORTS] Cache evicted ${toDelete} oldest entries (FIFO), ${shortsCache.size} remaining`
+		);
+	}
+	shortsCache.set(videoId, value);
+}
+
+/**
  * Parse an ISO 8601 duration string (PT#H#M#S) to total seconds.
+ *
+ * YouTube's `contentDetails.duration` field uses ISO 8601 duration format.
+ * Examples: "PT1M30S" -> 90, "PT1H" -> 3600, "PT45S" -> 45.
+ *
+ * @param iso8601 - The ISO 8601 duration string from YouTube's API.
+ * @returns Duration in seconds, or 0 if the string cannot be parsed.
  */
 export function parseDurationSeconds(iso8601: string): number {
 	const match = iso8601.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
@@ -45,7 +107,19 @@ export function parseDurationSeconds(iso8601: string): number {
 
 /**
  * Check if a video is a YouTube Short by making a HEAD request to the shorts URL.
- * If the server responds with 200, it's a Short. If it redirects (303), it's a regular video.
+ *
+ * Makes a HEAD request to `https://www.youtube.com/shorts/{videoId}` with
+ * `redirect: 'manual'` so we can inspect the status code:
+ * - **200** = Short (the `/shorts/` page exists for this video)
+ * - **303** = Regular video (YouTube redirects away from `/shorts/`)
+ *
+ * The request has a {@link HEAD_PROBE_TIMEOUT_MS} timeout via AbortController.
+ * On timeout or any network error, the video is **treated as a Short** (fail-safe:
+ * the app's primary purpose is to filter Shorts, so we err on the side of removal).
+ * Failed results are NOT cached so they'll be retried on subsequent requests.
+ *
+ * @param videoId - The YouTube video ID to check.
+ * @returns `true` if the video is a Short (or probe failed), `false` if it's a regular video.
  */
 export async function isShort(videoId: string): Promise<boolean> {
 	const cached = shortsCache.get(videoId);
@@ -55,31 +129,55 @@ export async function isShort(videoId: string): Promise<boolean> {
 	}
 
 	try {
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), HEAD_PROBE_TIMEOUT_MS);
+
 		const res = await fetch(`https://www.youtube.com/shorts/${videoId}`, {
 			method: 'HEAD',
-			redirect: 'manual'
+			redirect: 'manual',
+			signal: controller.signal
 		});
+
+		clearTimeout(timeout);
 
 		const result = res.status === 200;
 		console.log(
 			`[SHORTS] isShort HEAD probe for ${videoId}: status=${res.status}, isShort=${result}`
 		);
-		shortsCache.set(videoId, result);
+		shortsCacheSet(videoId, result);
 		return result;
 	} catch (err) {
-		console.warn(`[SHORTS] isShort HEAD probe FAILED for ${videoId}:`, err);
-		return false;
+		/* Fail-safe: treat as Short on timeout/network error. The primary purpose
+		 * of this application is removing Shorts — it's better to temporarily hide
+		 * a regular short-duration video than to show a Short to the user.
+		 *
+		 * We do NOT cache this result so it will be retried on the next request.
+		 * If the video is actually a regular video, it will appear once the probe
+		 * succeeds. */
+		const isTimeout = err instanceof DOMException && err.name === 'AbortError';
+		console.warn(
+			`[SHORTS] isShort HEAD probe FAILED for ${videoId} (${isTimeout ? 'TIMEOUT' : 'NETWORK ERROR'}) — treating as Short (fail-safe, not cached):`,
+			err
+		);
+		return true;
 	}
 }
 
 /**
  * Filter out YouTube Shorts from a list of videos.
  *
- * Strategy:
- * 1. Videos with duration > 180s are definitely not Shorts - keep them.
- * 2. Videos with duration <= 60s are very likely Shorts - check with isShort().
- * 3. Videos with duration 61-180s are borderline - check with isShort().
- * 4. Videos with no duration info - check with isShort().
+ * Applies a two-layer filtering strategy to each video:
+ *
+ * 1. **Duration pre-filter:** Videos with `duration > 180s` are guaranteed not
+ *    to be Shorts (YouTube max is 60s, with 180s as a safety margin) and are
+ *    kept immediately without any network calls.
+ *
+ * 2. **HEAD probe:** Videos with `duration <= 180s` or no duration data are
+ *    checked concurrently via {@link isShort}. All probes run in parallel via
+ *    `Promise.all` to minimize total latency.
+ *
+ * @param videos - Array of video items to filter.
+ * @returns Array of videos with all detected Shorts removed.
  */
 export async function filterOutShorts(videos: VideoItem[]): Promise<VideoItem[]> {
 	console.log(`[SHORTS] filterOutShorts called with ${videos.length} videos`);

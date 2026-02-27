@@ -32,10 +32,18 @@ export const GET: RequestHandler = async ({ url }) => {
 	try {
 		const result = await getComments(videoId, pageToken);
 		console.log('[API COMMENTS] Returning', result.items.length, 'comments for video:', videoId);
-		return json({
-			comments: result.items,
-			nextPageToken: result.pageInfo.nextPageToken
-		});
+		/* Cache for 5 minutes — matches the server-side TTL cache duration for
+		 * comments. Browsers and CDN edges can serve repeat requests for the same
+		 * comment page without hitting the server. */
+		return json(
+			{
+				comments: result.items,
+				nextPageToken: result.pageInfo.nextPageToken
+			},
+			{
+				headers: { 'Cache-Control': 'public, max-age=300' }
+			}
+		);
 	} catch (err) {
 		console.error('[API COMMENTS] getComments FAILED for', videoId, ':', err);
 		return json({ comments: [], nextPageToken: undefined });

@@ -5,27 +5,35 @@
  * 1. User clicks "Sign in" -> redirect to Google's consent screen.
  * 2. Google redirects back with an authorization code.
  * 3. Server exchanges the code for an access token + refresh token.
- * 4. Tokens are serialized into an HMAC-signed cookie for subsequent requests.
+ * 4. Tokens are encrypted into an AES-256-GCM cookie for subsequent requests.
  *
  * **Session cookie strategy:**
- * Rather than storing sessions in a database, the session payload (tokens,
- * expiry, basic profile info) is base64url-encoded and signed with an
- * HMAC-SHA256 signature using the `AUTH_SECRET` env var. This is similar to
- * how JWTs work but simpler -- there is no header or registered claims, just
- * `payload.signature`. The signature prevents tampering; the base64url
- * encoding ensures the cookie is safe for HTTP headers (no `+`, `/`, or `=`
- * characters that standard base64 would produce).
+ * The session payload (tokens, expiry, basic profile info) is encrypted with
+ * AES-256-GCM using a key derived from `AUTH_SECRET`. This provides both
+ * confidentiality (tokens are opaque in the cookie) and integrity (the GCM
+ * auth tag prevents tampering). Legacy HMAC-signed cookies from before this
+ * change are detected and accepted for a smooth migration — they'll be
+ * upgraded to AES-GCM on the next cookie write.
  *
  * The access token scope is `youtube.readonly`, which allows reading
  * subscriptions, liked videos, and playlists but cannot modify anything.
  */
 
-import { createHmac as nodeCreateHmac } from 'node:crypto';
+import {
+	createHmac as nodeCreateHmac,
+	createCipheriv,
+	createDecipheriv,
+	randomBytes,
+	timingSafeEqual
+} from 'node:crypto';
 import { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, AUTH_SECRET, PUBLIC_APP_URL } from './env.js';
 import type { UserSession } from '$lib/types.js';
 
-/** Name of the HTTP-only cookie that stores the signed session payload. */
+/** Name of the HTTP-only cookie that stores the encrypted session payload. */
 export const SESSION_COOKIE_NAME = 'shortless_session';
+
+/** Name of the short-lived cookie that stores the OAuth CSRF state parameter. */
+export const STATE_COOKIE_NAME = 'shortless_oauth_state';
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -35,11 +43,21 @@ const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 // ===================================================================
 
 /**
+ * Generate a cryptographically random OAuth state parameter for CSRF protection.
+ *
+ * @returns A 32-byte random string encoded as base64url.
+ */
+export function generateOAuthState(): string {
+	return randomBytes(32).toString('base64url');
+}
+
+/**
  * Build the Google OAuth2 authorization URL.
  *
+ * @param state - CSRF state parameter to include in the authorization request.
  * @returns A fully-qualified URL to redirect the user to Google's consent screen.
  */
-export function getGoogleAuthUrl(): string {
+export function getGoogleAuthUrl(state: string): string {
 	const clientId = GOOGLE_CLIENT_ID();
 	const appUrl = PUBLIC_APP_URL();
 	const redirectUri = `${appUrl}/api/auth/callback`;
@@ -56,7 +74,8 @@ export function getGoogleAuthUrl(): string {
 		response_type: 'code',
 		scope: 'https://www.googleapis.com/auth/youtube.readonly',
 		access_type: 'offline',
-		prompt: 'consent'
+		prompt: 'consent',
+		state
 	});
 
 	const url = `${GOOGLE_AUTH_URL}?${params.toString()}`;
@@ -161,83 +180,78 @@ export async function refreshAccessToken(
 }
 
 // ===================================================================
-// Session cookie serialization
+// Session cookie encryption (AES-256-GCM)
 // ===================================================================
 
 /**
- * Serialize a {@link UserSession} into a cookie-safe signed string.
+ * Derive a 32-byte AES-256 encryption key from AUTH_SECRET.
  *
- * The format is `<base64url-payload>.<base64url-hmac>`. The HMAC ensures
- * integrity -- if anyone modifies the payload, the signature will not match
- * on decryption and the session will be rejected.
+ * Uses HMAC-SHA256 with a fixed label so any length of AUTH_SECRET produces
+ * exactly 32 bytes suitable for AES-256.
+ */
+function getEncryptionKey(): Buffer {
+	return nodeCreateHmac('sha256', AUTH_SECRET()).update('shortless-session-encryption').digest();
+}
+
+/**
+ * Encrypt a {@link UserSession} into a cookie-safe AES-256-GCM string.
  *
- * @param session - The session object to serialize.
- * @returns A cookie-safe string in the format `payload.signature`.
+ * Format: `<base64url-iv>.<base64url-authTag>.<base64url-ciphertext>`.
+ * The 12-byte IV is randomly generated per encryption. The 16-byte GCM auth
+ * tag ensures both integrity and authenticity. The ciphertext is the encrypted
+ * JSON session payload.
+ *
+ * @param session - The session object to encrypt.
+ * @returns A cookie-safe string in the format `iv.tag.ciphertext`.
  */
 export function encryptSession(session: UserSession): string {
 	console.log(
-		'[AUTH] Encrypting session, has accessToken:',
+		'[AUTH] Encrypting session (AES-256-GCM), has accessToken:',
 		!!session.accessToken,
 		'has refreshToken:',
 		!!session.refreshToken
 	);
-	const payload = JSON.stringify(session);
-	const encoded = Buffer.from(payload, 'utf-8').toString('base64url');
-	const signature = signHmac(encoded);
-	const result = `${encoded}.${signature}`;
-	console.log('[AUTH] Session encrypted, cookie length:', result.length, 'chars');
+
+	const key = getEncryptionKey();
+	const iv = randomBytes(12);
+	const cipher = createCipheriv('aes-256-gcm', key, iv);
+
+	const plaintext = JSON.stringify(session);
+	const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+	const tag = cipher.getAuthTag();
+
+	const result = `${iv.toString('base64url')}.${tag.toString('base64url')}.${encrypted.toString('base64url')}`;
+	console.log('[AUTH] Session encrypted (AES-256-GCM), cookie length:', result.length, 'chars');
 	return result;
 }
 
 /**
  * Validate and deserialize a session cookie string.
  *
- * Verifies the HMAC signature, decodes the payload, and performs basic
- * structural validation on the resulting session object.
+ * Supports two formats:
+ * - **AES-256-GCM** (3 dot-separated parts): `iv.tag.ciphertext` — current format.
+ * - **Legacy HMAC** (2 dot-separated parts): `payload.signature` — migration path
+ *   for existing sessions; these will be upgraded to AES-GCM on next cookie write.
  *
- * @param cookie - The raw cookie string in `payload.signature` format.
+ * @param cookie - The raw cookie string.
  * @returns The parsed {@link UserSession}, or `null` if invalid/tampered.
  */
 export function decryptSession(cookie: string): UserSession | null {
 	try {
 		console.log('[AUTH] Decrypting session cookie, length:', cookie.length);
-		const dotIndex = cookie.lastIndexOf('.');
-		if (dotIndex === -1) {
-			console.warn('[AUTH] Session cookie has no dot separator — invalid format');
-			return null;
+		const parts = cookie.split('.');
+
+		if (parts.length === 3) {
+			return decryptAesGcm(parts[0], parts[1], parts[2]);
 		}
 
-		const encoded = cookie.slice(0, dotIndex);
-		const signature = cookie.slice(dotIndex + 1);
-
-		const expectedSignature = signHmac(encoded);
-		if (signature !== expectedSignature) {
-			console.warn(
-				'[AUTH] Session cookie HMAC signature mismatch — cookie was tampered or AUTH_SECRET changed'
-			);
-			return null;
+		if (parts.length === 2) {
+			console.log('[AUTH] Detected legacy HMAC session format, attempting migration path...');
+			return decryptLegacyHmac(parts[0], parts[1]);
 		}
 
-		const payload = Buffer.from(encoded, 'base64url').toString('utf-8');
-		const session = JSON.parse(payload) as UserSession;
-
-		if (!session.accessToken || !session.refreshToken || !session.expiresAt) {
-			console.warn(
-				'[AUTH] Session cookie structural validation FAILED — missing fields. accessToken:',
-				!!session.accessToken,
-				'refreshToken:',
-				!!session.refreshToken,
-				'expiresAt:',
-				!!session.expiresAt
-			);
-			return null;
-		}
-
-		console.log(
-			'[AUTH] Session decrypted successfully, token ends: ...',
-			session.accessToken.slice(-6)
-		);
-		return session;
+		console.warn('[AUTH] Session cookie has unexpected format — part count:', parts.length);
+		return null;
 	} catch (err) {
 		console.error('[AUTH] Session decryption threw error:', err);
 		return null;
@@ -245,7 +259,84 @@ export function decryptSession(cookie: string): UserSession | null {
 }
 
 /**
+ * Decrypt a session from the AES-256-GCM cookie format.
+ */
+function decryptAesGcm(ivB64: string, tagB64: string, ciphertextB64: string): UserSession | null {
+	const key = getEncryptionKey();
+	const iv = Buffer.from(ivB64, 'base64url');
+	const tag = Buffer.from(tagB64, 'base64url');
+	const ciphertext = Buffer.from(ciphertextB64, 'base64url');
+
+	const decipher = createDecipheriv('aes-256-gcm', key, iv);
+	decipher.setAuthTag(tag);
+
+	const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+	const session = JSON.parse(decrypted.toString('utf8')) as UserSession;
+
+	if (!session.accessToken || !session.refreshToken || !session.expiresAt) {
+		console.warn(
+			'[AUTH] AES-GCM decrypted session missing required fields. accessToken:',
+			!!session.accessToken,
+			'refreshToken:',
+			!!session.refreshToken,
+			'expiresAt:',
+			!!session.expiresAt
+		);
+		return null;
+	}
+
+	console.log(
+		'[AUTH] Session decrypted (AES-256-GCM) successfully, token ends: ...',
+		session.accessToken.slice(-6)
+	);
+	return session;
+}
+
+/**
+ * Decrypt a session from the legacy HMAC-signed cookie format.
+ *
+ * Uses timing-safe comparison to prevent timing attacks on the HMAC signature.
+ * Existing sessions in this format will continue to work; they'll be re-encrypted
+ * with AES-GCM on the next cookie write (e.g. token refresh).
+ */
+function decryptLegacyHmac(encoded: string, signature: string): UserSession | null {
+	const expectedSignature = signHmac(encoded);
+
+	const sigBuf = Buffer.from(signature, 'base64url');
+	const expectedBuf = Buffer.from(expectedSignature, 'base64url');
+
+	if (sigBuf.length !== expectedBuf.length || !timingSafeEqual(sigBuf, expectedBuf)) {
+		console.warn(
+			'[AUTH] Legacy session HMAC signature mismatch — cookie was tampered or AUTH_SECRET changed'
+		);
+		return null;
+	}
+
+	const payload = Buffer.from(encoded, 'base64url').toString('utf-8');
+	const session = JSON.parse(payload) as UserSession;
+
+	if (!session.accessToken || !session.refreshToken || !session.expiresAt) {
+		console.warn(
+			'[AUTH] Legacy session structural validation FAILED — missing fields. accessToken:',
+			!!session.accessToken,
+			'refreshToken:',
+			!!session.refreshToken,
+			'expiresAt:',
+			!!session.expiresAt
+		);
+		return null;
+	}
+
+	console.log(
+		'[AUTH] Legacy HMAC session decrypted successfully (will upgrade to AES-GCM on next cookie write), token ends: ...',
+		session.accessToken.slice(-6)
+	);
+	return session;
+}
+
+/**
  * Produce an HMAC-SHA256 signature for the given data string.
+ * Retained for legacy session format migration support.
  *
  * @param data - The string to sign (typically the base64url-encoded session payload).
  * @returns The HMAC digest as a base64url-encoded string.
@@ -253,7 +344,5 @@ export function decryptSession(cookie: string): UserSession | null {
 function signHmac(data: string): string {
 	const hmac = nodeCreateHmac('sha256', AUTH_SECRET());
 	hmac.update(data);
-	/* base64url output matches the encoding used for the payload, keeping
-	 * the entire cookie value cookie-safe without extra escaping. */
 	return hmac.digest('base64url');
 }

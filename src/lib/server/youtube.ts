@@ -16,7 +16,8 @@
  * endpoint, query parameters, and pagination token. For example:
  * - `search:v:cats::medium:` — video search for "cats", no page token, medium
  *   duration, default order.
- * - `vdetails:abc123,def456` — video detail fetch for two IDs.
+ * - `video:abc123` — individual video detail fetch (per-ID caching).
+ * - `channel:UC123` — individual channel detail fetch (per-ID caching).
  * - `user:subs:x1y2z3ab:` — subscriptions for a user identified by the last
  *   8 characters of their access token (avoids storing the full token in keys).
  *
@@ -180,6 +181,11 @@ function parsePlaylistItem(item: Record<string, unknown>): PlaylistItem {
  *
  * Comment threads have a deeply nested structure:
  * `item.snippet.topLevelComment.snippet` contains the actual comment data.
+ *
+ * Uses `textOriginal` (plain text) instead of `textDisplay` (rendered HTML)
+ * because our template renders comment text with Svelte's auto-escaping
+ * (`{comment.text}`). Using `textDisplay` would show raw HTML tags as literal
+ * text to the user. Falls back to `textDisplay` if `textOriginal` is unavailable.
  */
 function parseCommentItem(item: Record<string, unknown>): CommentItem {
 	const snippet = item.snippet as Record<string, unknown> | undefined;
@@ -190,7 +196,7 @@ function parseCommentItem(item: Record<string, unknown>): CommentItem {
 		id: (item.id as string) ?? '',
 		authorName: (commentSnippet?.authorDisplayName as string) ?? '',
 		authorAvatarUrl: (commentSnippet?.authorProfileImageUrl as string) ?? '',
-		text: (commentSnippet?.textDisplay as string) ?? '',
+		text: (commentSnippet?.textOriginal as string) ?? (commentSnippet?.textDisplay as string) ?? '',
 		likeCount: (commentSnippet?.likeCount as number) ?? 0,
 		publishedAt: (commentSnippet?.publishedAt as string) ?? '',
 		replyCount: (snippet?.totalReplyCount as number) ?? 0
@@ -373,9 +379,10 @@ export async function searchPlaylists(
 /**
  * Fetch full video details (snippet, contentDetails, statistics) for a list of IDs.
  *
- * The YouTube API allows at most 50 video IDs per request, so this function
- * automatically batches larger lists into multiple requests. Each batch is
- * independently cached so that overlapping ID sets benefit from prior fetches.
+ * Uses per-ID caching so the same video appearing across different contexts
+ * (search results, trending, channel uploads, playlists) shares a single cache
+ * entry. Only IDs not already cached are fetched from the API. Uncached IDs are
+ * batched in groups of 50 (YouTube's maximum `id` parameter size per request).
  *
  * @param ids - Array of YouTube video IDs to look up.
  * @returns Array of fully-hydrated video items (order may differ from input).
@@ -383,21 +390,30 @@ export async function searchPlaylists(
 export async function getVideoDetails(ids: string[]): Promise<VideoItem[]> {
 	console.log(`[YOUTUBE] getVideoDetails called with ${ids.length} IDs`);
 	const results: VideoItem[] = [];
+	const uncachedIds: string[] = [];
 
-	for (let i = 0; i < ids.length; i += 50) {
-		const batch = ids.slice(i, i + 50);
-		const batchKey = `vdetails:${batch.join(',')}`;
-		const cached = publicCache.get<VideoItem[]>(batchKey);
-
+	/* Check individual video cache first — avoids redundant API calls when the
+	 * same video ID appears in different batch combinations (e.g. a video that
+	 * shows up in both search results and trending). */
+	for (const id of ids) {
+		const cached = publicCache.get<VideoItem>(`video:${id}`);
 		if (cached) {
-			console.log(`[YOUTUBE] getVideoDetails CACHE HIT for batch of ${batch.length}`);
-			results.push(...cached);
-			continue;
+			results.push(cached);
+		} else {
+			uncachedIds.push(id);
 		}
+	}
 
+	if (uncachedIds.length > 0) {
 		console.log(
-			`[YOUTUBE] getVideoDetails CACHE MISS — fetching batch of ${batch.length} from API`
+			`[YOUTUBE] getVideoDetails — ${results.length} individual cache hits, ${uncachedIds.length} need fetching`
 		);
+	}
+
+	/* Batch-fetch uncached IDs in groups of 50 (YouTube API maximum). */
+	for (let i = 0; i < uncachedIds.length; i += 50) {
+		const batch = uncachedIds.slice(i, i + 50);
+		console.log(`[YOUTUBE] getVideoDetails fetching batch of ${batch.length} from API`);
 		const data = (await youtubeApiFetch('videos', {
 			part: 'snippet,contentDetails,statistics',
 			id: batch.join(','),
@@ -407,7 +423,12 @@ export async function getVideoDetails(ids: string[]): Promise<VideoItem[]> {
 		const items = (data.items as Record<string, unknown>[]) ?? [];
 		const videos = items.map(parseVideoItem);
 		console.log(`[YOUTUBE] getVideoDetails batch returned ${videos.length} videos`);
-		publicCache.set(batchKey, videos, FIFTEEN_MINUTES);
+
+		/* Cache each video individually so future requests for any subset
+		 * of these IDs will hit the per-ID cache. */
+		for (const video of videos) {
+			publicCache.set(`video:${video.id}`, video, FIFTEEN_MINUTES);
+		}
 		results.push(...videos);
 	}
 
@@ -418,7 +439,10 @@ export async function getVideoDetails(ids: string[]): Promise<VideoItem[]> {
 /**
  * Fetch full channel details (snippet, statistics, brandingSettings) for a list of IDs.
  *
- * Batches in groups of 50, same as {@link getVideoDetails}.
+ * Uses per-ID caching identical to {@link getVideoDetails}: each channel is cached
+ * individually so the same channel appearing in search results, video watch pages,
+ * and subscription lists shares a single cache entry. Only uncached IDs are fetched,
+ * batched in groups of 50.
  *
  * @param ids - Array of YouTube channel IDs to look up.
  * @returns Array of fully-hydrated channel items.
@@ -426,17 +450,26 @@ export async function getVideoDetails(ids: string[]): Promise<VideoItem[]> {
 export async function getChannelDetails(ids: string[]): Promise<ChannelItem[]> {
 	console.log(`[YOUTUBE] getChannelDetails called with ${ids.length} IDs`);
 	const results: ChannelItem[] = [];
+	const uncachedIds: string[] = [];
 
-	for (let i = 0; i < ids.length; i += 50) {
-		const batch = ids.slice(i, i + 50);
-		const batchKey = `cdetails:${batch.join(',')}`;
-		const cached = publicCache.get<ChannelItem[]>(batchKey);
-
+	/* Per-ID cache check — same pattern as getVideoDetails. */
+	for (const id of ids) {
+		const cached = publicCache.get<ChannelItem>(`channel:${id}`);
 		if (cached) {
-			results.push(...cached);
-			continue;
+			results.push(cached);
+		} else {
+			uncachedIds.push(id);
 		}
+	}
 
+	if (uncachedIds.length > 0) {
+		console.log(
+			`[YOUTUBE] getChannelDetails — ${results.length} individual cache hits, ${uncachedIds.length} need fetching`
+		);
+	}
+
+	for (let i = 0; i < uncachedIds.length; i += 50) {
+		const batch = uncachedIds.slice(i, i + 50);
 		const data = (await youtubeApiFetch('channels', {
 			part: 'snippet,statistics,brandingSettings',
 			id: batch.join(','),
@@ -446,7 +479,10 @@ export async function getChannelDetails(ids: string[]): Promise<ChannelItem[]> {
 		const items = (data.items as Record<string, unknown>[]) ?? [];
 		const channels = items.map(parseChannelItem);
 		console.log(`[YOUTUBE] getChannelDetails batch returned ${channels.length} channels`);
-		publicCache.set(batchKey, channels, ONE_HOUR);
+
+		for (const channel of channels) {
+			publicCache.set(`channel:${channel.id}`, channel, ONE_HOUR);
+		}
 		results.push(...channels);
 	}
 

@@ -24,7 +24,12 @@ export const GET: RequestHandler = async ({ url }) => {
 	try {
 		const suggestions = await getAutocompleteSuggestions(query);
 		console.log('[API SUGGEST] Returning', suggestions.length, 'suggestions for:', query);
-		return json(suggestions);
+		/* Cache for 5 minutes — autocomplete suggestions for the same prefix
+		 * are stable over short periods. Allows browsers to serve repeat requests
+		 * (e.g. user re-typing a previous query) without hitting the server. */
+		return json(suggestions, {
+			headers: { 'Cache-Control': 'public, max-age=300' }
+		});
 	} catch (err) {
 		console.error('[API SUGGEST] getAutocompleteSuggestions FAILED:', err);
 		return json([]);
