@@ -4,13 +4,12 @@
 
 ## Install
 
-### Chrome Web Store
+| Browser | Link                                                                                                            |
+| ------- | --------------------------------------------------------------------------------------------------------------- |
+| Chrome  | [Chrome Web Store](https://chromewebstore.google.com/detail/shortless-youtube/gbhekjekjjjepnnbbfipfbiobndblpaa) |
+| Firefox | [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/shortless-youtube/)                            |
 
-> [Install from Chrome Web Store](https://chrome.google.com/webstore/detail/shortless-youtube/PLACEHOLDER) _(coming soon)_
-
-### Firefox Add-ons
-
-> [Install from Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/shortless-youtube/) _(coming soon)_
+---
 
 ### Manual Install (Chrome)
 
