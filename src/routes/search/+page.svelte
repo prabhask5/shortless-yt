@@ -103,21 +103,23 @@
 				{/if}
 			{/each}
 		</div>
-	{:else if filteredResults.length === 0}
+	{:else if filteredResults.length === 0 && !nextPageToken}
 		<p class="text-yt-text-secondary mt-8 text-center">No results found for "{data.query}"</p>
 	{:else}
 		<div class="mt-4">
-			<VirtualFeed items={filteredResults} columns={1} gap={8}>
-				{#snippet children(result)}
-					{#if result.type === 'video'}
-						<VideoCard video={result.item} layout="horizontal" />
-					{:else if result.type === 'channel'}
-						<ChannelCard channel={result.item} />
-					{:else if result.type === 'playlist'}
-						<PlaylistCard playlist={result.item} />
-					{/if}
-				{/snippet}
-			</VirtualFeed>
+			{#if filteredResults.length > 0}
+				<VirtualFeed items={filteredResults} columns={1} gap={8}>
+					{#snippet children(result)}
+						{#if result.type === 'video'}
+							<VideoCard video={result.item} layout="horizontal" />
+						{:else if result.type === 'channel'}
+							<ChannelCard channel={result.item} />
+						{:else if result.type === 'playlist'}
+							<PlaylistCard playlist={result.item} />
+						{/if}
+					{/snippet}
+				</VirtualFeed>
+			{/if}
 			{#if nextPageToken}
 				<div class="flex justify-center py-6">
 					<button

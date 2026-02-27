@@ -10,13 +10,20 @@
  * - `?source=channel&pageToken=X&channelId=Y` — channel uploads
  * - `?source=liked&pageToken=X` — authenticated user's liked videos
  * - `?source=search&pageToken=X&q=Y` — search results (mixed types)
+ * - `?source=subfeed&pageTokens=JSON&playlistIds=JSON` — subscription feed
  *
  * All video responses are filtered through `filterOutBrokenVideos` + `filterOutShorts`.
- * Returns `{ items, nextPageToken }` (or `{ results, nextPageToken }` for search).
  */
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getTrending, getChannelVideos, getLikedVideos, searchMixed } from '$lib/server/youtube';
+import {
+	getTrending,
+	getChannelVideos,
+	getLikedVideos,
+	searchMixed,
+	getSubscriptionFeed
+} from '$lib/server/youtube';
+import type { SubFeedCursor } from '$lib/server/youtube';
 import { filterOutShorts, filterOutBrokenVideos } from '$lib/server/shorts';
 import type { VideoItem } from '$lib/types';
 
@@ -30,12 +37,9 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 		throw error(400, 'Missing source parameter');
 	}
 
-	if (!pageToken) {
-		throw error(400, 'Missing pageToken parameter');
-	}
-
 	try {
 		if (source === 'trending') {
+			if (!pageToken) throw error(400, 'Missing pageToken parameter');
 			const categoryId = url.searchParams.get('categoryId') || undefined;
 			const result = await getTrending(categoryId, pageToken);
 			const clean = filterOutBrokenVideos(result.items);
@@ -48,6 +52,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 		}
 
 		if (source === 'channel') {
+			if (!pageToken) throw error(400, 'Missing pageToken parameter');
 			const channelId = url.searchParams.get('channelId');
 			if (!channelId) {
 				throw error(400, 'Missing channelId parameter');
@@ -63,6 +68,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 		}
 
 		if (source === 'liked') {
+			if (!pageToken) throw error(400, 'Missing pageToken parameter');
 			if (!locals.session) {
 				throw error(401, 'Authentication required');
 			}
@@ -77,6 +83,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 		}
 
 		if (source === 'search') {
+			if (!pageToken) throw error(400, 'Missing pageToken parameter');
 			const query = url.searchParams.get('q');
 			if (!query) {
 				throw error(400, 'Missing q parameter');
@@ -101,6 +108,25 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			return json(
 				{ results, nextPageToken: nextToken },
 				{ headers: { 'Cache-Control': 'public, max-age=300' } }
+			);
+		}
+
+		if (source === 'subfeed') {
+			if (!locals.session) {
+				throw error(401, 'Authentication required');
+			}
+			const cursorRaw = url.searchParams.get('cursor');
+			if (!cursorRaw) {
+				throw error(400, 'Missing cursor parameter');
+			}
+			const feedCursor = JSON.parse(cursorRaw) as SubFeedCursor;
+			const result = await getSubscriptionFeed(locals.session.accessToken, feedCursor);
+			const clean = filterOutBrokenVideos(result.items);
+			const filtered = await filterOutShorts(clean);
+			console.log('[API VIDEOS] SubFeed: returning', filtered.length, 'videos');
+			return json(
+				{ items: filtered, cursor: result.cursor },
+				{ headers: { 'Cache-Control': 'private, max-age=60' } }
 			);
 		}
 

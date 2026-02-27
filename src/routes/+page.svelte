@@ -43,6 +43,13 @@
 		}
 	});
 
+	/* Auto-load if first page was entirely filtered out (e.g. all shorts) */
+	$effect(() => {
+		if (trendingItems.length === 0 && trendingNextToken && !trendingLoading) {
+			loadMoreTrending();
+		}
+	});
+
 	async function loadMoreTrending() {
 		if (!trendingNextToken || trendingLoading) return;
 		trendingLoading = true;
@@ -58,16 +65,41 @@
 		}
 	}
 
-	/* ── Auth feed: just virtualize (flat array, no pagination) ── */
+	/* ── Auth feed: infinite scroll via k-way merge cursor ── */
 	let authFeed = $state<VideoItem[]>([]);
+	let subFeedCursor = $state<unknown>(undefined);
+	let authFeedLoading = $state(false);
 
 	$effect(() => {
 		if (data.authenticated && 'streamed' in data && data.streamed.authData) {
 			data.streamed.authData.then((authData) => {
 				authFeed = authData.feed ?? [];
+				subFeedCursor = authData.cursor;
 			});
 		}
 	});
+
+	/* Auto-load if first page was entirely filtered out (e.g. all shorts) */
+	$effect(() => {
+		if (authFeed.length === 0 && subFeedCursor && !authFeedLoading) {
+			loadMoreAuthFeed();
+		}
+	});
+
+	async function loadMoreAuthFeed() {
+		if (!subFeedCursor || authFeedLoading) return;
+		authFeedLoading = true;
+		try {
+			const res = await fetch(
+				`/api/videos?source=subfeed&cursor=${encodeURIComponent(JSON.stringify(subFeedCursor))}`
+			);
+			const json = await res.json();
+			authFeed = [...authFeed, ...json.items];
+			subFeedCursor = json.cursor;
+		} finally {
+			authFeedLoading = false;
+		}
+	}
 
 	function handleCategoryChange(categoryId: string) {
 		if (categoryId === '0') {
@@ -125,12 +157,19 @@
 				{/if}
 				<section>
 					{#if authFeed.length > 0}
-						<VirtualFeed items={authFeed} columns={cols.value} gap={16}>
+						<VirtualFeed
+							items={authFeed}
+							columns={cols.value}
+							gap={16}
+							hasMore={!!subFeedCursor}
+							loadingMore={authFeedLoading}
+							onLoadMore={loadMoreAuthFeed}
+						>
 							{#snippet children(video)}
 								<VideoCard {video} />
 							{/snippet}
 						</VirtualFeed>
-					{:else}
+					{:else if !subFeedCursor}
 						<p class="text-yt-text-secondary py-8 text-center">
 							No recent videos from your subscriptions.
 						</p>
@@ -176,8 +215,10 @@
 								<VideoCard {video} />
 							{/snippet}
 						</VirtualFeed>
-					{:else}
+					{:else if trendingNextToken}
 						{@render videoSkeletons()}
+					{:else}
+						<p class="text-yt-text-secondary py-8 text-center">No trending videos found.</p>
 					{/if}
 				</section>
 			{:catch}

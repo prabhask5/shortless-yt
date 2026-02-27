@@ -32,6 +32,13 @@
 		});
 	});
 
+	/* Auto-load if first page was entirely filtered out (e.g. all shorts) */
+	$effect(() => {
+		if (allVideos.length === 0 && nextPageToken && !loadingMore) {
+			loadMore();
+		}
+	});
+
 	async function loadMore() {
 		if (!nextPageToken || loadingMore) return;
 		loadingMore = true;
@@ -190,7 +197,7 @@
 							<VideoCard {video} />
 						{/snippet}
 					</VirtualFeed>
-				{:else}
+				{:else if !nextPageToken}
 					<p class="text-yt-text-secondary py-8 text-center">No videos found.</p>
 				{/if}
 			{:catch}

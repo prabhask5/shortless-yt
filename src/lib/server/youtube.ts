@@ -1342,80 +1342,259 @@ export async function getUserPlaylists(
  * @param accessToken - The user's OAuth2 access token.
  * @returns Array of recent videos from subscriptions, sorted newest first.
  */
-export async function getSubscriptionFeed(accessToken: string): Promise<VideoItem[]> {
-	const cacheKey = `user:subfeed:${accessToken.slice(-8)}`;
-	const cached = userCache.get<VideoItem[]>(cacheKey);
-	if (cached) {
-		console.log(`[YOUTUBE] getSubscriptionFeed CACHE HIT, ${cached.length} videos`);
-		return cached;
+// ===================================================================
+// Subscription feed — k-way merge of channel upload timelines
+// ===================================================================
+
+/** How many playlist items to fetch per channel per batch. */
+const SUBFEED_BATCH_SIZE = 5;
+/** How many videos to return per page of the subscription feed. */
+const SUBFEED_PAGE_SIZE = 20;
+/** Maximum number of subscribed channels to include in the feed. */
+const SUBFEED_MAX_CHANNELS = 15;
+
+/** Per-channel cursor state for subscription feed pagination. */
+export interface SubFeedChannelCursor {
+	/** Uploads playlist ID. */
+	playlistId: string;
+	/** Videos consumed from the current buffered batch. */
+	offset: number;
+	/** Token used to fetch the current batch (undefined = first page). */
+	fetchToken?: string;
+	/** Token for the next batch (undefined = no more pages). */
+	nextToken?: string;
+}
+
+/** Serializable cursor for resuming the subscription feed k-way merge. */
+export type SubFeedCursor = SubFeedChannelCursor[];
+
+/** Result shape for the subscription feed. */
+export interface SubFeedResult {
+	items: VideoItem[];
+	/** Cursor for the next page. Undefined when all channels are exhausted. */
+	cursor?: SubFeedCursor;
+}
+
+/** Lightweight video reference from playlistItems, used for merge sorting. */
+interface PlaylistVideoRef {
+	id: string;
+	publishedAt: string;
+}
+
+/** Working buffer for a single channel during the k-way merge. */
+interface ChannelBuffer {
+	playlistId: string;
+	refs: PlaylistVideoRef[];
+	offset: number;
+	fetchToken?: string;
+	nextToken?: string;
+}
+
+/**
+ * Fetch one page of a channel's uploads playlist as lightweight refs.
+ * Results are cached by the YouTube API client, so re-fetches on resume are free.
+ */
+async function fetchUploadsBatch(
+	playlistId: string,
+	pageToken?: string
+): Promise<{ refs: PlaylistVideoRef[]; nextToken?: string }> {
+	const params: Record<string, string> = {
+		part: 'snippet',
+		playlistId,
+		maxResults: String(SUBFEED_BATCH_SIZE)
+	};
+	if (pageToken) params.pageToken = pageToken;
+
+	const data = (await youtubeApiFetch('playlistItems', params)) as Record<string, unknown>;
+	const items = (data.items as Record<string, unknown>[]) ?? [];
+
+	const refs: PlaylistVideoRef[] = [];
+	for (const item of items) {
+		const snippet = item.snippet as Record<string, unknown> | undefined;
+		const resourceId = snippet?.resourceId as Record<string, string> | undefined;
+		const videoId = resourceId?.videoId;
+		const publishedAt = (snippet?.publishedAt as string) ?? '';
+		if (videoId) refs.push({ id: videoId, publishedAt });
 	}
-	console.log('[YOUTUBE] getSubscriptionFeed CACHE MISS, building feed...');
 
-	// Step 1: Get subscriptions
-	const subs = await getSubscriptions(accessToken);
-	const channelIds = subs.items.map((ch) => ch.id).filter(Boolean);
-	console.log(`[YOUTUBE] getSubscriptionFeed — ${channelIds.length} subscribed channels`);
+	return { refs, nextToken: data.nextPageToken as string | undefined };
+}
 
-	if (channelIds.length === 0) return [];
+/** Refill a channel buffer by fetching its next page. No-op if exhausted. */
+async function refillBuffer(buf: ChannelBuffer): Promise<void> {
+	if (!buf.nextToken) return;
+	const { refs, nextToken } = await fetchUploadsBatch(buf.playlistId, buf.nextToken);
+	buf.refs = refs;
+	buf.offset = 0;
+	buf.fetchToken = buf.nextToken;
+	buf.nextToken = nextToken;
+}
 
-	// Limit to 15 channels to conserve quota
-	const limitedIds = channelIds.slice(0, 15);
+/** Peek at the next unconsumed video in a buffer, or undefined if empty. */
+function peekBuffer(buf: ChannelBuffer): PlaylistVideoRef | undefined {
+	return buf.offset < buf.refs.length ? buf.refs[buf.offset] : undefined;
+}
 
-	// Step 2: Batch-fetch channels to get uploads playlist IDs
-	const channelData = (await youtubeApiFetch('channels', {
-		part: 'contentDetails',
-		id: limitedIds.join(','),
-		maxResults: '50'
-	})) as Record<string, unknown>;
+/**
+ * Build a subscription feed using a k-way merge of channel upload timelines.
+ *
+ * Each channel's uploads playlist is a sorted stream (newest first). This
+ * function maintains a buffer per channel and always picks the globally
+ * most recent video across all channels. When a channel's buffer is
+ * exhausted, its next page is fetched on demand.
+ *
+ * On the first call (no cursor), discovers subscriptions and fetches
+ * initial batches. On subsequent calls, reconstructs buffers from the
+ * cursor (re-fetches hit the API cache).
+ *
+ * Only fetches full video details for the videos actually returned
+ * (typically 20), not for all buffered videos — much more quota-efficient
+ * than the naive "fetch everything and sort" approach.
+ */
+export async function getSubscriptionFeed(
+	accessToken: string,
+	cursor?: SubFeedCursor
+): Promise<SubFeedResult> {
+	let buffers: ChannelBuffer[];
 
-	const channelItems = (channelData.items as Record<string, unknown>[]) ?? [];
-	const uploadsPlaylistIds: string[] = [];
+	if (!cursor) {
+		// First page: discover subscriptions → uploads playlists → initial batches
+		const cacheKey = `user:subfeed:plids:${accessToken.slice(-8)}`;
+		let playlistIds = userCache.get<string[]>(cacheKey);
 
-	for (const ch of channelItems) {
-		const contentDetails = ch.contentDetails as Record<string, unknown> | undefined;
-		const relatedPlaylists = contentDetails?.relatedPlaylists as Record<string, string> | undefined;
-		const uploadsId = relatedPlaylists?.uploads;
-		if (uploadsId) uploadsPlaylistIds.push(uploadsId);
-	}
+		if (!playlistIds) {
+			console.log('[YOUTUBE] getSubscriptionFeed — discovering subscriptions...');
+			const subs = await getSubscriptions(accessToken);
+			const channelIds = subs.items
+				.map((ch) => ch.id)
+				.filter(Boolean)
+				.slice(0, SUBFEED_MAX_CHANNELS);
 
-	console.log(
-		`[YOUTUBE] getSubscriptionFeed — found ${uploadsPlaylistIds.length} uploads playlists`
-	);
+			if (channelIds.length === 0) return { items: [] };
 
-	// Step 3: Fetch 5 recent videos from each channel's uploads playlist (in parallel)
-	const playlistFetches = uploadsPlaylistIds.map(async (playlistId) => {
-		try {
-			const data = (await youtubeApiFetch('playlistItems', {
-				part: 'snippet',
-				playlistId,
-				maxResults: '5'
+			const channelData = (await youtubeApiFetch('channels', {
+				part: 'contentDetails',
+				id: channelIds.join(','),
+				maxResults: '50'
 			})) as Record<string, unknown>;
 
-			const items = (data.items as Record<string, unknown>[]) ?? [];
-			return items
-				.map((i) => {
-					const snippet = i.snippet as Record<string, unknown> | undefined;
-					const resourceId = snippet?.resourceId as Record<string, string> | undefined;
-					return resourceId?.videoId ?? '';
-				})
-				.filter(Boolean);
-		} catch (err) {
-			console.warn(`[YOUTUBE] getSubscriptionFeed — failed to fetch playlist ${playlistId}:`, err);
-			return [];
+			const channelItems = (channelData.items as Record<string, unknown>[]) ?? [];
+			playlistIds = [];
+			for (const ch of channelItems) {
+				const cd = ch.contentDetails as Record<string, unknown> | undefined;
+				const rp = cd?.relatedPlaylists as Record<string, string> | undefined;
+				if (rp?.uploads) playlistIds.push(rp.uploads);
+			}
+
+			console.log(`[YOUTUBE] getSubscriptionFeed — found ${playlistIds.length} uploads playlists`);
+			userCache.set(cacheKey, playlistIds, THIRTY_MINUTES);
+		} else {
+			console.log(
+				`[YOUTUBE] getSubscriptionFeed playlistIds CACHE HIT, ${playlistIds.length} playlists`
+			);
 		}
-	});
 
-	const allVideoIdArrays = await Promise.all(playlistFetches);
-	const allVideoIds = allVideoIdArrays.flat();
-	console.log(`[YOUTUBE] getSubscriptionFeed — collected ${allVideoIds.length} video IDs total`);
+		// Fetch first batch from all channels in parallel
+		const results = await Promise.all(
+			playlistIds.map(async (pid) => {
+				try {
+					const { refs, nextToken } = await fetchUploadsBatch(pid);
+					return {
+						playlistId: pid,
+						refs,
+						offset: 0,
+						fetchToken: undefined,
+						nextToken
+					} as ChannelBuffer;
+				} catch (err) {
+					console.warn(`[YOUTUBE] subfeed — failed initial fetch for ${pid}:`, err);
+					return null;
+				}
+			})
+		);
+		buffers = results.filter((r): r is ChannelBuffer => r !== null);
+	} else {
+		// Resume from cursor: re-fetch each channel's current page (cached)
+		const results = await Promise.all(
+			cursor.map(async (ch) => {
+				try {
+					const { refs, nextToken } = await fetchUploadsBatch(ch.playlistId, ch.fetchToken);
+					return {
+						playlistId: ch.playlistId,
+						refs,
+						offset: ch.offset,
+						fetchToken: ch.fetchToken,
+						nextToken
+					} as ChannelBuffer;
+				} catch (err) {
+					console.warn(`[YOUTUBE] subfeed — failed resume for ${ch.playlistId}:`, err);
+					return null;
+				}
+			})
+		);
+		buffers = results.filter((r): r is ChannelBuffer => r !== null);
+	}
 
-	// Step 4: Fetch full video details and sort by date
-	const videos = allVideoIds.length > 0 ? await getVideoDetails(allVideoIds) : [];
-	videos.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+	// K-way merge: repeatedly pick the globally most recent video
+	const selectedIds: string[] = [];
 
-	console.log(`[YOUTUBE] getSubscriptionFeed — ${videos.length} videos after details fetch`);
-	userCache.set(cacheKey, videos, THIRTY_MINUTES);
-	return videos;
+	while (selectedIds.length < SUBFEED_PAGE_SIZE) {
+		// Find the channel whose top video is most recent
+		let bestIdx = -1;
+		let bestDate = '';
+
+		for (let i = 0; i < buffers.length; i++) {
+			const top = peekBuffer(buffers[i]);
+			if (!top) continue;
+			if (bestIdx === -1 || top.publishedAt > bestDate) {
+				bestIdx = i;
+				bestDate = top.publishedAt;
+			}
+		}
+
+		if (bestIdx === -1) {
+			// All current buffers empty — try refilling channels that have more pages
+			const toRefill = buffers.filter((b) => !peekBuffer(b) && b.nextToken);
+			if (toRefill.length === 0) break; // truly exhausted
+			await Promise.all(toRefill.map(refillBuffer));
+			continue;
+		}
+
+		// Take this video and advance the channel's cursor
+		selectedIds.push(buffers[bestIdx].refs[buffers[bestIdx].offset].id);
+		buffers[bestIdx].offset++;
+
+		// Eagerly refill if this channel's buffer is now exhausted
+		if (!peekBuffer(buffers[bestIdx]) && buffers[bestIdx].nextToken) {
+			await refillBuffer(buffers[bestIdx]);
+		}
+	}
+
+	// Fetch full video details only for the selected IDs (quota-efficient)
+	const videos = selectedIds.length > 0 ? await getVideoDetails(selectedIds) : [];
+
+	// Preserve merge order (getVideoDetails may return in different order)
+	const videoMap = new Map(videos.map((v) => [v.id, v]));
+	const orderedVideos = selectedIds
+		.map((id) => videoMap.get(id))
+		.filter((v): v is VideoItem => v !== undefined);
+
+	// Build cursor: only include channels that still have content
+	const activeBuffers = buffers.filter((b) => peekBuffer(b) || b.nextToken);
+	const newCursor: SubFeedCursor | undefined =
+		activeBuffers.length > 0
+			? activeBuffers.map((b) => ({
+					playlistId: b.playlistId,
+					offset: b.offset,
+					fetchToken: b.fetchToken,
+					nextToken: b.nextToken
+				}))
+			: undefined;
+
+	console.log(
+		`[YOUTUBE] getSubscriptionFeed — returning ${orderedVideos.length} videos, ${activeBuffers.length} channels active`
+	);
+	return { items: orderedVideos, cursor: newCursor };
 }
 
 /**

@@ -181,22 +181,24 @@ export async function isShort(videoId: string): Promise<boolean> {
  */
 export async function filterOutShorts(videos: VideoItem[]): Promise<VideoItem[]> {
 	console.log(`[SHORTS] filterOutShorts called with ${videos.length} videos`);
-	const results: VideoItem[] = [];
 	const toCheck: Array<{ video: VideoItem; index: number }> = [];
+
+	/* Build a per-video keep/skip decision array that preserves original order. */
+	const keep: boolean[] = new Array(videos.length).fill(true);
 
 	for (let i = 0; i < videos.length; i++) {
 		const video = videos[i];
 		const durationSeconds = video.duration ? parseDurationSeconds(video.duration) : 0;
 
 		if (video.duration && durationSeconds > 180) {
-			results.push(video);
+			/* Guaranteed not a Short — keep (already true). */
 		} else {
 			toCheck.push({ video, index: i });
 		}
 	}
 
 	console.log(
-		`[SHORTS] ${results.length} videos passed duration pre-filter (>180s), ${toCheck.length} need HEAD probe`
+		`[SHORTS] ${videos.length - toCheck.length} videos passed duration pre-filter (>180s), ${toCheck.length} need HEAD probe`
 	);
 
 	if (toCheck.length > 0) {
@@ -204,9 +206,8 @@ export async function filterOutShorts(videos: VideoItem[]): Promise<VideoItem[]>
 
 		let filtered = 0;
 		for (let i = 0; i < toCheck.length; i++) {
-			if (!checks[i]) {
-				results.push(toCheck[i].video);
-			} else {
+			if (checks[i]) {
+				keep[toCheck[i].index] = false;
 				filtered++;
 			}
 		}
@@ -215,6 +216,7 @@ export async function filterOutShorts(videos: VideoItem[]): Promise<VideoItem[]>
 		);
 	}
 
+	const results = videos.filter((_, i) => keep[i]);
 	console.log(
 		`[SHORTS] filterOutShorts final: ${results.length} videos remain from original ${videos.length}`
 	);

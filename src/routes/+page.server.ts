@@ -16,6 +16,7 @@ import {
 	getSubscriptions,
 	getSubscriptionFeed
 } from '$lib/server/youtube';
+import type { SubFeedCursor } from '$lib/server/youtube';
 import { filterOutShorts, filterOutBrokenVideos } from '$lib/server/shorts';
 
 const emptyChannels: PaginatedResult<ChannelItem> = {
@@ -27,14 +28,14 @@ async function fetchAuthData(accessToken: string) {
 	console.log(
 		'[HOME PAGE] Authenticated path — fetching subscriptions + subscription feed in parallel'
 	);
-	const [subscriptions, feedVideos] = await Promise.all([
+	const [subscriptions, feedResult] = await Promise.all([
 		getSubscriptions(accessToken).catch((err) => {
 			console.error('[HOME PAGE] getSubscriptions FAILED:', err);
 			return emptyChannels;
 		}),
 		getSubscriptionFeed(accessToken).catch((err) => {
 			console.error('[HOME PAGE] getSubscriptionFeed FAILED:', err);
-			return [] as VideoItem[];
+			return { items: [] as VideoItem[], cursor: undefined as SubFeedCursor | undefined };
 		})
 	]);
 
@@ -42,21 +43,22 @@ async function fetchAuthData(accessToken: string) {
 		'[HOME PAGE] Auth results — subscriptions:',
 		subscriptions.items.length,
 		'feed videos:',
-		feedVideos.length
+		feedResult.items.length
 	);
-	const cleanFeed = filterOutBrokenVideos(feedVideos);
+	const cleanFeed = filterOutBrokenVideos(feedResult.items);
 	const filteredFeed = await filterOutShorts(cleanFeed);
 	console.log(
 		'[HOME PAGE] After shorts filter:',
 		filteredFeed.length,
 		'videos remain (from',
-		feedVideos.length,
+		feedResult.items.length,
 		')'
 	);
 
 	return {
 		subscriptions: subscriptions.items,
-		feed: filteredFeed
+		feed: filteredFeed,
+		cursor: feedResult.cursor
 	};
 }
 
