@@ -1,3 +1,32 @@
+/**
+ * @fileoverview YouTube Data API v3 client for Shortless.
+ *
+ * This module is the single point of contact with the YouTube API. It handles:
+ * - Constructing authenticated/unauthenticated API requests.
+ * - Parsing raw API responses into normalized app types ({@link VideoItem},
+ *   {@link ChannelItem}, etc.).
+ * - Aggressive caching via the shared TTL cache to conserve the daily 10,000-unit
+ *   API quota.
+ * - Batching detail fetches in groups of 50 (YouTube's maximum `id` parameter
+ *   size per request).
+ * - Autocomplete suggestions via YouTube's undocumented JSONP suggestion endpoint.
+ *
+ * **Cache key strategy:**
+ * Cache keys are human-readable, colon-separated strings that encode the
+ * endpoint, query parameters, and pagination token. For example:
+ * - `search:v:cats::medium:` — video search for "cats", no page token, medium
+ *   duration, default order.
+ * - `vdetails:abc123,def456` — video detail fetch for two IDs.
+ * - `user:subs:x1y2z3ab:` — subscriptions for a user identified by the last
+ *   8 characters of their access token (avoids storing the full token in keys).
+ *
+ * **Why detail fetches follow search:**
+ * The YouTube `search` endpoint only returns `snippet` data (title, thumbnail,
+ * channel). It does NOT include `contentDetails` (duration) or `statistics`
+ * (view count, likes). To get those, a second call to the `videos` or
+ * `channels` endpoint is required with the IDs from the search results.
+ */
+
 import { YOUTUBE_API_KEY } from './env.js';
 import { publicCache, userCache } from './cache.js';
 import type {
@@ -10,16 +39,31 @@ import type {
 
 const BASE_URL = 'https://www.googleapis.com/youtube/v3';
 
-// Cache TTLs
+// ===================================================================
+// Cache TTL constants
+// ===================================================================
+
 const FIVE_MINUTES = 5 * 60 * 1000;
 const FIFTEEN_MINUTES = 15 * 60 * 1000;
 const ONE_HOUR = 60 * 60 * 1000;
 const ONE_DAY = 24 * 60 * 60 * 1000;
 
-// ---------------------------------------------------------------------------
+// ===================================================================
 // Internal helpers
-// ---------------------------------------------------------------------------
+// ===================================================================
 
+/**
+ * Low-level fetch wrapper for the YouTube Data API v3.
+ *
+ * Handles API key injection for public requests and Bearer token injection
+ * for authenticated requests. All higher-level functions delegate to this.
+ *
+ * @param endpoint    - API endpoint path relative to the v3 base (e.g. "search", "videos").
+ * @param params      - Query parameters to append to the request URL.
+ * @param accessToken - Optional OAuth2 access token for authenticated endpoints.
+ * @returns The parsed JSON response body.
+ * @throws {Error} If the API responds with a non-2xx status.
+ */
 async function youtubeApiFetch(
 	endpoint: string,
 	params: Record<string, string>,
@@ -27,6 +71,7 @@ async function youtubeApiFetch(
 ): Promise<unknown> {
 	const url = new URL(`${BASE_URL}/${endpoint}`);
 
+	/* Public requests use the API key; authenticated requests use the Bearer token instead. */
 	if (!accessToken) {
 		url.searchParams.set('key', YOUTUBE_API_KEY());
 	}
@@ -50,6 +95,12 @@ async function youtubeApiFetch(
 	return res.json();
 }
 
+/**
+ * Parse a raw YouTube API video resource into a normalized {@link VideoItem}.
+ *
+ * Handles both search results (where `id` is an object `{videoId}`) and
+ * direct video resources (where `id` is a plain string).
+ */
 function parseVideoItem(item: Record<string, unknown>): VideoItem {
 	const snippet = item.snippet as Record<string, unknown> | undefined;
 	const contentDetails = item.contentDetails as Record<string, unknown> | undefined;
@@ -72,6 +123,12 @@ function parseVideoItem(item: Record<string, unknown>): VideoItem {
 	};
 }
 
+/**
+ * Parse a raw YouTube API channel resource into a normalized {@link ChannelItem}.
+ *
+ * Handles both search results (where `id` is `{channelId}`) and direct
+ * channel resources (where `id` is a plain string).
+ */
 function parseChannelItem(item: Record<string, unknown>): ChannelItem {
 	const snippet = item.snippet as Record<string, unknown> | undefined;
 	const statistics = item.statistics as Record<string, unknown> | undefined;
@@ -90,6 +147,7 @@ function parseChannelItem(item: Record<string, unknown>): ChannelItem {
 	};
 }
 
+/** Parse a raw YouTube API playlist resource into a normalized {@link PlaylistItem}. */
 function parsePlaylistItem(item: Record<string, unknown>): PlaylistItem {
 	const snippet = item.snippet as Record<string, unknown> | undefined;
 	const contentDetails = item.contentDetails as Record<string, unknown> | undefined;
@@ -108,6 +166,12 @@ function parsePlaylistItem(item: Record<string, unknown>): PlaylistItem {
 	};
 }
 
+/**
+ * Parse a raw YouTube API comment thread into a normalized {@link CommentItem}.
+ *
+ * Comment threads have a deeply nested structure:
+ * `item.snippet.topLevelComment.snippet` contains the actual comment data.
+ */
 function parseCommentItem(item: Record<string, unknown>): CommentItem {
 	const snippet = item.snippet as Record<string, unknown> | undefined;
 	const topLevel = snippet?.topLevelComment as Record<string, unknown> | undefined;
@@ -124,14 +188,27 @@ function parseCommentItem(item: Record<string, unknown>): CommentItem {
 	};
 }
 
-// ---------------------------------------------------------------------------
-// Public search functions
-// ---------------------------------------------------------------------------
+// ===================================================================
+// Search
+// ===================================================================
 
+/**
+ * Search YouTube for videos matching a query string.
+ *
+ * Performs a two-step process: first searches for video IDs via the `search`
+ * endpoint, then fetches full video details (duration, statistics) via
+ * {@link getVideoDetails}. This is necessary because YouTube's search endpoint
+ * only returns snippet data, not `contentDetails` or `statistics`.
+ *
+ * @param query   - The search query string.
+ * @param options - Optional pagination token, duration filter, and sort order.
+ * @returns Paginated list of fully-hydrated video items.
+ */
 export async function searchVideos(
 	query: string,
 	options?: { pageToken?: string; videoDuration?: string; order?: string }
 ): Promise<PaginatedResult<VideoItem>> {
+	/* Cache key encodes all parameters so different filter combos are cached independently. */
 	const cacheKey = `search:v:${query}:${options?.pageToken ?? ''}:${options?.videoDuration ?? ''}:${options?.order ?? ''}`;
 	const cached = publicCache.get<PaginatedResult<VideoItem>>(cacheKey);
 	if (cached) return cached;
@@ -152,7 +229,7 @@ export async function searchVideos(
 		.map((i) => (i.id as Record<string, string>)?.videoId ?? '')
 		.filter(Boolean);
 
-	// Fetch full details (duration, viewCount)
+	/* Search only returns snippets — fetch full details for duration, viewCount, etc. */
 	const videos = videoIds.length > 0 ? await getVideoDetails(videoIds) : [];
 
 	const pageInfoRaw = data.pageInfo as Record<string, unknown> | undefined;
@@ -168,6 +245,16 @@ export async function searchVideos(
 	return result;
 }
 
+/**
+ * Search YouTube for channels matching a query string.
+ *
+ * Like {@link searchVideos}, uses a two-step process to get full channel
+ * statistics (subscriber count, video count) from the `channels` endpoint.
+ *
+ * @param query     - The search query string.
+ * @param pageToken - Optional pagination token for the next page.
+ * @returns Paginated list of channel items with full statistics.
+ */
 export async function searchChannels(
 	query: string,
 	pageToken?: string
@@ -205,6 +292,16 @@ export async function searchChannels(
 	return result;
 }
 
+/**
+ * Search YouTube for playlists matching a query string.
+ *
+ * Fetches full playlist details (including `itemCount`) in a follow-up call
+ * to the `playlists` endpoint.
+ *
+ * @param query     - The search query string.
+ * @param pageToken - Optional pagination token for the next page.
+ * @returns Paginated list of playlist items.
+ */
 export async function searchPlaylists(
 	query: string,
 	pageToken?: string
@@ -228,7 +325,7 @@ export async function searchPlaylists(
 		.map((i) => (i.id as Record<string, string>)?.playlistId ?? '')
 		.filter(Boolean);
 
-	// Fetch full playlist details for itemCount
+	/* Search does not include contentDetails (itemCount), so fetch full details. */
 	const playlists: PlaylistItem[] = [];
 	if (playlistIds.length > 0) {
 		const detailData = (await youtubeApiFetch('playlists', {
@@ -255,14 +352,24 @@ export async function searchPlaylists(
 	return result;
 }
 
-// ---------------------------------------------------------------------------
+// ===================================================================
 // Detail fetchers
-// ---------------------------------------------------------------------------
+// ===================================================================
 
+/**
+ * Fetch full video details (snippet, contentDetails, statistics) for a list of IDs.
+ *
+ * The YouTube API allows at most 50 video IDs per request, so this function
+ * automatically batches larger lists into multiple requests. Each batch is
+ * independently cached so that overlapping ID sets benefit from prior fetches.
+ *
+ * @param ids - Array of YouTube video IDs to look up.
+ * @returns Array of fully-hydrated video items (order may differ from input).
+ */
 export async function getVideoDetails(ids: string[]): Promise<VideoItem[]> {
 	const results: VideoItem[] = [];
 
-	// Batch in groups of 50
+	/* YouTube API's `id` param accepts at most 50 comma-separated IDs per call. */
 	for (let i = 0; i < ids.length; i += 50) {
 		const batch = ids.slice(i, i + 50);
 		const batchKey = `vdetails:${batch.join(',')}`;
@@ -288,6 +395,14 @@ export async function getVideoDetails(ids: string[]): Promise<VideoItem[]> {
 	return results;
 }
 
+/**
+ * Fetch full channel details (snippet, statistics, brandingSettings) for a list of IDs.
+ *
+ * Batches in groups of 50, same as {@link getVideoDetails}.
+ *
+ * @param ids - Array of YouTube channel IDs to look up.
+ * @returns Array of fully-hydrated channel items.
+ */
 export async function getChannelDetails(ids: string[]): Promise<ChannelItem[]> {
 	const results: ChannelItem[] = [];
 
@@ -316,6 +431,19 @@ export async function getChannelDetails(ids: string[]): Promise<ChannelItem[]> {
 	return results;
 }
 
+/**
+ * Fetch videos uploaded by a specific channel.
+ *
+ * YouTube does not have a direct "list videos by channel" endpoint.
+ * Instead this performs a three-step process:
+ * 1. Fetch the channel's `contentDetails` to get its hidden "uploads" playlist ID.
+ * 2. List items from that playlist to get video IDs.
+ * 3. Fetch full video details via {@link getVideoDetails}.
+ *
+ * @param channelId - The YouTube channel ID.
+ * @param pageToken - Optional pagination token for the next page.
+ * @returns Paginated list of the channel's uploaded videos.
+ */
 export async function getChannelVideos(
 	channelId: string,
 	pageToken?: string
@@ -378,10 +506,21 @@ export async function getChannelVideos(
 	return result;
 }
 
-// ---------------------------------------------------------------------------
+// ===================================================================
 // Trending & categories
-// ---------------------------------------------------------------------------
+// ===================================================================
 
+/**
+ * Fetch trending (most popular) videos, optionally filtered by category.
+ *
+ * Uses the `videos` endpoint with `chart=mostPopular` rather than the
+ * `search` endpoint, which means full details (duration, statistics) are
+ * returned in a single API call -- no follow-up detail fetch needed.
+ *
+ * @param categoryId - Optional YouTube video category ID to filter by.
+ * @param pageToken  - Optional pagination token for the next page.
+ * @returns Paginated list of trending video items.
+ */
 export async function getTrending(
 	categoryId?: string,
 	pageToken?: string
@@ -416,6 +555,15 @@ export async function getTrending(
 	return result;
 }
 
+/**
+ * Fetch the list of assignable YouTube video categories for the US region.
+ *
+ * Categories are stable and rarely change, so results are cached for a full day.
+ * Only "assignable" categories are returned (ones that can be set on uploads),
+ * which filters out deprecated/internal-only categories.
+ *
+ * @returns Array of `{id, title}` objects for each assignable category.
+ */
 export async function getVideoCategories(): Promise<Array<{ id: string; title: string }>> {
 	const cacheKey = 'categories';
 	const cached = publicCache.get<Array<{ id: string; title: string }>>(cacheKey);
@@ -444,10 +592,17 @@ export async function getVideoCategories(): Promise<Array<{ id: string; title: s
 	return categories;
 }
 
-// ---------------------------------------------------------------------------
+// ===================================================================
 // Comments
-// ---------------------------------------------------------------------------
+// ===================================================================
 
+/**
+ * Fetch top-level comment threads for a video, sorted by relevance.
+ *
+ * @param videoId   - The YouTube video ID.
+ * @param pageToken - Optional pagination token for the next page.
+ * @returns Paginated list of comment items.
+ */
 export async function getComments(
 	videoId: string,
 	pageToken?: string
@@ -481,10 +636,16 @@ export async function getComments(
 	return result;
 }
 
-// ---------------------------------------------------------------------------
+// ===================================================================
 // Playlists
-// ---------------------------------------------------------------------------
+// ===================================================================
 
+/**
+ * Fetch metadata for a single playlist by ID.
+ *
+ * @param playlistId - The YouTube playlist ID.
+ * @returns The playlist item, or `null` if it does not exist.
+ */
 export async function getPlaylist(playlistId: string): Promise<PlaylistItem | null> {
 	const cacheKey = `playlist:${playlistId}`;
 	const cached = publicCache.get<PlaylistItem | null>(cacheKey);
@@ -506,6 +667,16 @@ export async function getPlaylist(playlistId: string): Promise<PlaylistItem | nu
 	return playlist;
 }
 
+/**
+ * Fetch videos contained in a playlist.
+ *
+ * Retrieves playlist item IDs first, then fetches full video details via
+ * {@link getVideoDetails}.
+ *
+ * @param playlistId - The YouTube playlist ID.
+ * @param pageToken  - Optional pagination token for the next page.
+ * @returns Paginated list of video items in the playlist.
+ */
 export async function getPlaylistVideos(
 	playlistId: string,
 	pageToken?: string
@@ -547,14 +718,26 @@ export async function getPlaylistVideos(
 	return result;
 }
 
-// ---------------------------------------------------------------------------
-// Authenticated user endpoints
-// ---------------------------------------------------------------------------
+// ===================================================================
+// Authenticated endpoints
+// ===================================================================
 
+/**
+ * Fetch the authenticated user's channel subscriptions.
+ *
+ * Uses the user-scoped cache keyed by the last 8 characters of the access
+ * token -- enough to distinguish sessions without storing the full token
+ * in the cache key.
+ *
+ * @param accessToken - The user's OAuth2 access token.
+ * @param pageToken   - Optional pagination token for the next page.
+ * @returns Paginated list of subscribed channel items.
+ */
 export async function getSubscriptions(
 	accessToken: string,
 	pageToken?: string
 ): Promise<PaginatedResult<ChannelItem>> {
+	/* Use last 8 chars of token as a session fingerprint for the cache key. */
 	const cacheKey = `user:subs:${accessToken.slice(-8)}:${pageToken ?? ''}`;
 	const cached = userCache.get<PaginatedResult<ChannelItem>>(cacheKey);
 	if (cached) return cached;
@@ -602,6 +785,13 @@ export async function getSubscriptions(
 	return result;
 }
 
+/**
+ * Fetch videos the authenticated user has liked.
+ *
+ * @param accessToken - The user's OAuth2 access token.
+ * @param pageToken   - Optional pagination token for the next page.
+ * @returns Paginated list of liked video items.
+ */
 export async function getLikedVideos(
 	accessToken: string,
 	pageToken?: string
@@ -634,6 +824,13 @@ export async function getLikedVideos(
 	return result;
 }
 
+/**
+ * Fetch playlists owned by the authenticated user.
+ *
+ * @param accessToken - The user's OAuth2 access token.
+ * @param pageToken   - Optional pagination token for the next page.
+ * @returns Paginated list of the user's playlist items.
+ */
 export async function getUserPlaylists(
 	accessToken: string,
 	pageToken?: string
@@ -666,10 +863,24 @@ export async function getUserPlaylists(
 	return result;
 }
 
-// ---------------------------------------------------------------------------
+// ===================================================================
 // Autocomplete
-// ---------------------------------------------------------------------------
+// ===================================================================
 
+/**
+ * Fetch search autocomplete suggestions from YouTube's suggestion service.
+ *
+ * This uses an undocumented YouTube endpoint (`suggestqueries-clients6`)
+ * that returns results in a JSONP-like format rather than standard JSON.
+ * The response looks like: `window.google.ac.h([[query,[suggestions...],...]])`.
+ * We extract the inner JSON array with a regex and parse it manually.
+ *
+ * This endpoint does NOT count against the YouTube Data API quota because
+ * it is a separate Google service used by the YouTube search bar itself.
+ *
+ * @param query - The partial search string to get suggestions for.
+ * @returns Array of suggestion strings, or empty array on failure.
+ */
 export async function getAutocompleteSuggestions(query: string): Promise<string[]> {
 	if (!query.trim()) return [];
 
@@ -682,8 +893,12 @@ export async function getAutocompleteSuggestions(query: string): Promise<string[
 		const res = await fetch(url);
 		const text = await res.text();
 
-		// Response is JSONP-like: window.google.ac.h([...])
-		// Extract the JSON array from it
+		/*
+		 * The response is JSONP-wrapped, not valid JSON. It looks like:
+		 *   window.google.ac.h([["query",[["suggestion1",0],["suggestion2",0],...]])
+		 * We use a greedy regex to extract the outermost JSON array, then parse
+		 * the nested structure: parsed[1] is an array of [suggestion, weight] tuples.
+		 */
 		const match = text.match(/\[.+\]/s);
 		if (!match) return [];
 

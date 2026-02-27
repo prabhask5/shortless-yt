@@ -1,7 +1,26 @@
 <script lang="ts">
+	/**
+	 * @fileoverview Header component -- the sticky top navigation bar for the entire app.
+	 * @component
+	 *
+	 * Contains the app logo, search bar, dark mode toggle, and user menu / sign-in button.
+	 *
+	 * The search bar has two rendering modes based on viewport width:
+	 * - Desktop (md+): The SearchBar is always visible in the center of the header.
+	 * - Mobile (<md): The SearchBar is hidden by default. A search icon button toggles
+	 *   `mobileSearchOpen`, which replaces the entire header content with a back arrow
+	 *   and a full-width SearchBar. This avoids cramming the search input into the
+	 *   narrow mobile header alongside the logo and action buttons.
+	 *
+	 * The user menu is a simple dropdown that appears on avatar click, showing the
+	 * channel name and a sign-out link. When no user is signed in, a "Sign in" button
+	 * links to the OAuth flow at /api/auth/signin.
+	 */
 	import SearchBar from './SearchBar.svelte';
 	import DarkModeToggle from './DarkModeToggle.svelte';
 
+	/** @prop user - The signed-in user's avatar and channel title, or null/undefined if not signed in */
+	/** @prop query - The current search query, used to pre-fill the SearchBar on search result pages */
 	let {
 		user,
 		query
@@ -10,7 +29,9 @@
 		query?: string;
 	} = $props();
 
+	/** Whether the mobile-only full-width search view is open */
 	let mobileSearchOpen = $state(false);
+	/** Whether the user avatar dropdown menu is visible */
 	let userMenuOpen = $state(false);
 </script>
 
@@ -18,7 +39,7 @@
 	class="border-yt-border bg-yt-bg sticky top-0 z-50 flex h-14 items-center gap-2 border-b px-4"
 >
 	{#if mobileSearchOpen}
-		<!-- Mobile search view -->
+		<!-- Mobile search view: replaces the entire header with a back button + full-width SearchBar -->
 		<button
 			onclick={() => (mobileSearchOpen = false)}
 			class="text-yt-text shrink-0 p-2"
@@ -40,14 +61,14 @@
 			<span class="text-yt-text text-lg font-bold">Shortless</span>
 		</a>
 
-		<!-- Desktop search -->
+		<!-- Desktop search: hidden on mobile, centered in the header on md+ screens -->
 		<div class="mx-4 hidden flex-1 justify-center md:flex">
 			<SearchBar initialQuery={query ?? ''} />
 		</div>
 
-		<!-- Right side actions -->
+		<!-- Right side actions: search toggle (mobile only), dark mode, and user menu -->
 		<div class="ml-auto flex items-center gap-1">
-			<!-- Mobile search toggle -->
+			<!-- Mobile search toggle: only visible on screens smaller than md breakpoint -->
 			<button
 				onclick={() => (mobileSearchOpen = true)}
 				class="text-yt-text p-2 md:hidden"
@@ -62,6 +83,7 @@
 
 			<DarkModeToggle />
 
+			<!-- User section: avatar dropdown when signed in, "Sign in" button when not -->
 			{#if user}
 				<div class="relative">
 					<button
@@ -80,7 +102,8 @@
 								<p class="text-yt-text text-sm font-medium">{user.channelTitle}</p>
 							</div>
 							<a
-								href="/api/auth/signout"
+								href="/api/auth/logout"
+								data-sveltekit-reload
 								class="text-yt-text hover:bg-yt-surface-hover block px-4 py-2 text-sm"
 							>
 								Sign out
@@ -90,7 +113,8 @@
 				</div>
 			{:else}
 				<a
-					href="/api/auth/signin"
+					href="/api/auth/login"
+					data-sveltekit-reload
 					class="ml-1 flex items-center gap-1.5 rounded-full border border-blue-400/50 px-3 py-1.5 text-sm font-medium text-blue-400 hover:bg-blue-400/10"
 				>
 					<svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">

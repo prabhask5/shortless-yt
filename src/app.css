@@ -9,13 +9,6 @@
 	--color-yt-accent: #ff0000;
 	--color-yt-accent-hover: #cc0000;
 	--color-yt-border: #3f3f3f;
-
-	--color-light-bg: #ffffff;
-	--color-light-surface: #f2f2f2;
-	--color-light-surface-hover: #e5e5e5;
-	--color-light-text: #0f0f0f;
-	--color-light-text-secondary: #606060;
-	--color-light-border: #e5e5e5;
 }
 
 html {
@@ -31,12 +24,16 @@ html {
 
 html.dark {
 	color-scheme: dark;
-	background-color: var(--color-yt-bg);
-	color: var(--color-yt-text);
 }
 
+/* Light mode: override the yt-* custom properties so all components
+   automatically switch colors without needing separate class names. */
 html.light {
 	color-scheme: light;
-	background-color: var(--color-light-bg);
-	color: var(--color-light-text);
+	--color-yt-bg: #ffffff;
+	--color-yt-surface: #f2f2f2;
+	--color-yt-surface-hover: #e5e5e5;
+	--color-yt-text: #0f0f0f;
+	--color-yt-text-secondary: #606060;
+	--color-yt-border: #e5e5e5;
 }

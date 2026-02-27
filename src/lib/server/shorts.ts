@@ -1,6 +1,32 @@
+/**
+ * @fileoverview Multi-layer YouTube Shorts filtering strategy.
+ *
+ * YouTube does not expose a public "isShort" flag in its Data API v3.
+ * This module combines two independent heuristics to reliably detect and
+ * filter out Shorts from video listings:
+ *
+ * **Layer 1 — Duration pre-filter (cheap, local):**
+ * Videos with a duration > 180 seconds are guaranteed to not be Shorts
+ * (YouTube enforces a 60-second limit on Shorts, but we use a generous 180s
+ * threshold because some vertical videos near the boundary are not technically
+ * Shorts). This layer eliminates the majority of regular videos without any
+ * network calls.
+ *
+ * **Layer 2 — HEAD request probe (authoritative, remote):**
+ * For videos that pass through Layer 1 (duration <= 180s or unknown), we
+ * perform a HEAD request to `https://www.youtube.com/shorts/{videoId}`. If
+ * YouTube responds with 200, the video is a Short (the /shorts/ page exists);
+ * if it responds with a 303 redirect, the video is a regular video (YouTube
+ * redirects away from the /shorts/ URL). This is the most reliable detection
+ * method available without an official API flag.
+ *
+ * Results are permanently cached per video ID because a video's Short status
+ * never changes after upload.
+ */
+
 import type { VideoItem } from '$lib/types.js';
 
-/** Permanent cache for shorts detection results (videoId -> isShort) */
+/** Permanent cache for shorts detection results (videoId -> isShort). */
 const shortsCache = new Map<string, boolean>();
 
 /**

@@ -1,12 +1,27 @@
 <script lang="ts">
+	/**
+	 * @fileoverview PlaylistCard component for displaying a playlist in search results and feeds.
+	 * @component
+	 *
+	 * Renders a playlist thumbnail with a stacked visual effect (two pseudo-borders behind the
+	 * main image) to convey that this is a collection of videos, not a single video. A semi-
+	 * transparent overlay on the right side shows the total video count with a playlist icon.
+	 *
+	 * The stacked look is achieved by layering two absolutely-positioned divs behind the
+	 * thumbnail image, each slightly offset and scaled to simulate a "deck of cards" effect.
+	 */
 	import type { PlaylistItem } from '$lib/types';
 
+	/** @prop playlist - The playlist data object with title, thumbnail, channel, and item count */
 	let { playlist }: { playlist: PlaylistItem } = $props();
 </script>
 
 <a href="/playlist/{playlist.id}" class="group flex flex-col gap-2">
 	<div class="relative aspect-video overflow-hidden rounded-xl">
-		<!-- Stacked look: pseudo-borders behind the thumbnail -->
+		<!-- Stacked look: two pseudo-border layers behind the thumbnail.
+		     The first is offset more (translate-x-1, -translate-y-1) and scaled smaller (0.97)
+		     with lower opacity (0.40), simulating a card further back in the stack.
+		     The second is closer to the main thumbnail, creating a layered depth illusion. -->
 		<div
 			class="border-yt-border absolute inset-0 translate-x-1 -translate-y-1 scale-[0.97] rounded-xl border-2 opacity-40"
 		></div>
@@ -21,7 +36,8 @@
 			loading="lazy"
 		/>
 
-		<!-- Item count overlay on right side -->
+		<!-- Item count overlay: a frosted-glass strip on the right side of the thumbnail
+		     showing a playlist icon and video count, matching YouTube's playlist card style -->
 		<div
 			class="absolute inset-y-0 right-0 flex w-24 items-center justify-center rounded-r-xl bg-black/70 backdrop-blur-sm"
 		>

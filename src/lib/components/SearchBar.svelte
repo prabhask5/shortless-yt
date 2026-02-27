@@ -1,17 +1,44 @@
 <script lang="ts">
+	/**
+	 * @fileoverview SearchBar component with autocomplete suggestions.
+	 * @component
+	 *
+	 * Provides a YouTube-style search input with a debounced autocomplete dropdown.
+	 * As the user types, suggestions are fetched from `/api/suggest` after a 300ms
+	 * debounce delay to avoid excessive API calls. The dropdown supports full keyboard
+	 * navigation (ArrowUp/Down to highlight, Enter to select, Escape to dismiss).
+	 *
+	 * Key behavior:
+	 * - The dropdown only appears when there are suggestions and the input is focused.
+	 * - Selecting a suggestion (via click or Enter) immediately navigates to the search page.
+	 * - A clear button (X) resets the input and re-focuses it for quick re-typing.
+	 * - Blur hides the dropdown with a 200ms delay so click events on suggestions fire first.
+	 */
 	import { goto } from '$app/navigation';
 
+	/** @prop initialQuery - Pre-fills the search input, used when returning to a search results page */
 	let { initialQuery = '' }: { initialQuery?: string } = $props();
 
 	// svelte-ignore state_referenced_locally
 	let query = $state(initialQuery);
+	/** Autocomplete suggestions returned from the API */
 	let suggestions = $state<string[]>([]);
+	/** Whether the autocomplete dropdown is visible */
 	let showDropdown = $state(false);
+	/** Currently highlighted suggestion index; -1 means none selected (keyboard nav) */
 	let selectedIndex = $state(-1);
+	/** Reference to the <input> DOM element for programmatic focus */
 	let inputEl = $state<HTMLInputElement | null>(null);
+	/** Timer handle for the debounce; cleared on each new keystroke */
 	let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
+	/**
+	 * Handles each keystroke in the search input.
+	 * Resets the keyboard selection, debounces for 300ms, then fetches autocomplete
+	 * suggestions from the server. Empty queries immediately clear the dropdown.
+	 */
 	function handleInput() {
+		/* Reset keyboard selection whenever the user types a new character */
 		selectedIndex = -1;
 		if (debounceTimer) clearTimeout(debounceTimer);
 
@@ -21,11 +48,13 @@
 			return;
 		}
 
+		/* 300ms debounce prevents firing a request on every single keystroke */
 		debounceTimer = setTimeout(async () => {
 			try {
 				const res = await fetch(`/api/suggest?q=${encodeURIComponent(query)}`);
 				if (res.ok) {
 					const data = await res.json();
+					/* Handle both { suggestions: [...] } and plain [...] response shapes */
 					suggestions = data.suggestions ?? data ?? [];
 					showDropdown = suggestions.length > 0;
 				}
@@ -36,6 +65,13 @@
 		}, 300);
 	}
 
+	/**
+	 * Handles keyboard navigation within the autocomplete dropdown.
+	 * ArrowDown/Up cycles through suggestions, Enter selects or submits,
+	 * Escape dismisses the dropdown. When the dropdown is closed, Enter
+	 * simply submits the current query.
+	 * @param e - The keyboard event from the input element
+	 */
 	function handleKeydown(e: KeyboardEvent) {
 		if (!showDropdown) {
 			if (e.key === 'Enter') {
@@ -47,10 +83,12 @@
 		switch (e.key) {
 			case 'ArrowDown':
 				e.preventDefault();
+				/* Clamp to the last suggestion index */
 				selectedIndex = Math.min(selectedIndex + 1, suggestions.length - 1);
 				break;
 			case 'ArrowUp':
 				e.preventDefault();
+				/* -1 means "back to the typed query" (no suggestion highlighted) */
 				selectedIndex = Math.max(selectedIndex - 1, -1);
 				break;
 			case 'Enter':
@@ -68,6 +106,10 @@
 		}
 	}
 
+	/**
+	 * Navigates to the search results page with the current query.
+	 * No-ops on empty/whitespace-only input.
+	 */
 	function doSearch() {
 		if (query.trim()) {
 			showDropdown = false;
@@ -75,12 +117,17 @@
 		}
 	}
 
+	/**
+	 * Selects a suggestion from the dropdown (via mouse click) and immediately searches.
+	 * @param suggestion - The suggestion text clicked by the user
+	 */
 	function selectSuggestion(suggestion: string) {
 		query = suggestion;
 		showDropdown = false;
 		doSearch();
 	}
 
+	/** Clears the search input, hides suggestions, and re-focuses the input for quick re-entry. */
 	function clearQuery() {
 		query = '';
 		suggestions = [];
@@ -88,8 +135,12 @@
 		inputEl?.focus();
 	}
 
+	/**
+	 * Hides the dropdown on blur with a 200ms delay.
+	 * The delay is necessary because blur fires before click -- without it,
+	 * clicking a suggestion would close the dropdown before the click registers.
+	 */
 	function handleBlur() {
-		// Delay to allow click on suggestion
 		setTimeout(() => {
 			showDropdown = false;
 		}, 200);
@@ -150,7 +201,9 @@
 		</button>
 	</form>
 
-	<!-- Autocomplete dropdown -->
+	<!-- Autocomplete dropdown: positioned absolutely below the search input.
+	     Uses role="listbox" + role="option" for screen reader accessibility.
+	     Each suggestion uses onmousedown (not onclick) so it fires before the input's blur event. -->
 	{#if showDropdown}
 		<ul
 			class="border-yt-border bg-yt-surface absolute top-11 z-50 w-full overflow-hidden rounded-xl border shadow-lg"

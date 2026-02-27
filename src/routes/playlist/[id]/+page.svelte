@@ -1,3 +1,13 @@
+<!--
+	@component Playlist Page
+
+	Displays a playlist's metadata (thumbnail, title, channel, video count,
+	description) alongside a numbered list of its videos.
+
+	The numbered list pattern wraps each video in an object with a `number`
+	field (1-indexed) so the VirtualFeed can render a track-number column
+	next to horizontal video cards, similar to YouTube's playlist layout.
+-->
 <script lang="ts">
 	import VideoCard from '$lib/components/VideoCard.svelte';
 	import VirtualFeed from '$lib/components/VirtualFeed.svelte';
@@ -5,6 +15,7 @@
 
 	let { data }: { data: PageData } = $props();
 
+	/* Map videos to numbered entries for the track-number display column */
 	let numberedVideos = $derived(data.videos.map((video, i) => ({ video, number: i + 1 })));
 </script>
 
@@ -33,9 +44,11 @@
 		</div>
 	</div>
 
+	<!-- Single-column VirtualFeed with numbered entries resembling YouTube's playlist view -->
 	<VirtualFeed items={numberedVideos} columns={1} estimateRowHeight={100} gap={12}>
 		{#snippet children(entry)}
 			<div class="flex items-center gap-3">
+				<!-- Track number column -->
 				<span class="text-yt-text-secondary w-8 text-center text-sm">{entry.number}</span>
 				<div class="flex-1">
 					<VideoCard video={entry.video} layout="horizontal" />

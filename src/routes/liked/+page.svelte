@@ -1,3 +1,12 @@
+<!--
+	@component Liked Videos Page
+
+	Displays the authenticated user's liked videos in a responsive grid.
+	Uses the same VirtualFeed + responsive column pattern as the home and
+	channel pages. When the video list is empty (either still loading or
+	the user has no liked videos), skeleton placeholders are shown to
+	prevent layout shift and indicate loading state.
+-->
 <script lang="ts">
 	import VideoCard from '$lib/components/VideoCard.svelte';
 	import VirtualFeed from '$lib/components/VirtualFeed.svelte';
@@ -8,6 +17,7 @@
 
 	let columns = $state(1);
 
+	/* Responsive column calculation: 3 columns on desktop, 2 on tablet, 1 on mobile */
 	$effect(() => {
 		function updateColumns() {
 			const w = window.innerWidth;

@@ -1,3 +1,15 @@
+/**
+ * @fileoverview Comment pagination API endpoint.
+ *
+ * The first page of comments is loaded server-side in the watch page's
+ * `+page.server.ts` load function. Subsequent pages are fetched client-side
+ * through this endpoint to avoid full-page navigations when the user clicks
+ * "load more comments".
+ *
+ * Both `videoId` and `pageToken` are required -- the initial page (no token)
+ * is handled by the server load, so this endpoint only serves continuation
+ * requests.
+ */
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getComments } from '$lib/server/youtube';

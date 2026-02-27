@@ -1,3 +1,13 @@
+<!--
+	@component Channel Page
+
+	Displays a channel's profile (avatar, title, subscriber/video counts,
+	description) followed by a responsive video grid of the channel's uploads.
+
+	The column count adapts to viewport width using the same breakpoint logic
+	as the home page. When there are no videos (or while loading), skeleton
+	placeholders are shown to prevent layout shift.
+-->
 <script lang="ts">
 	import VideoCard from '$lib/components/VideoCard.svelte';
 	import VirtualFeed from '$lib/components/VirtualFeed.svelte';
@@ -8,6 +18,7 @@
 
 	let columns = $state(1);
 
+	/* Responsive column calculation matching the home page breakpoints */
 	$effect(() => {
 		function updateColumns() {
 			const w = window.innerWidth;
@@ -21,6 +32,7 @@
 		return () => window.removeEventListener('resize', updateColumns);
 	});
 
+	/* Abbreviate large numbers for display (e.g. 1500000 -> "1.5M") */
 	function formatCount(count: string): string {
 		const n = parseInt(count, 10);
 		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -34,7 +46,7 @@
 </svelte:head>
 
 <div class="mx-auto max-w-screen-2xl">
-	<!-- Channel banner -->
+	<!-- Channel profile header: avatar, name, stats, and truncated description -->
 	<div class="flex items-center gap-4 px-4 py-6">
 		<img src={data.channel.thumbnailUrl} alt={data.channel.title} class="h-20 w-20 rounded-full" />
 		<div>
@@ -51,7 +63,7 @@
 		</div>
 	</div>
 
-	<!-- Videos -->
+	<!-- Channel videos grid: VirtualFeed for performance, skeletons as fallback -->
 	<div class="px-4 pb-8">
 		<h2 class="mb-4 text-lg font-medium">Videos</h2>
 		{#if data.videos.length > 0}

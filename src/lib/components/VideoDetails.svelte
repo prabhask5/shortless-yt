@@ -1,13 +1,34 @@
 <script lang="ts">
+	/**
+	 * @fileoverview VideoDetails component shown below the video player on the watch page.
+	 * @component
+	 *
+	 * Displays the video title, view/like counts, publish date, channel info (avatar, name,
+	 * subscriber count), and an expandable description section. The description uses CSS
+	 * `line-clamp-3` in collapsed state and shows the full text when expanded, with a
+	 * "Show more" / "Show less" toggle button.
+	 *
+	 * The date is shown as a relative "time ago" label with the exact date available
+	 * as a title tooltip on hover.
+	 */
 	let {
+		/** Video title displayed as the main heading */
 		title,
+		/** Raw view count string from the API */
 		viewCount,
+		/** ISO date string of when the video was published */
 		publishedAt,
+		/** YouTube channel ID for linking to the channel page */
 		channelId,
+		/** Display name of the channel */
 		channelTitle,
+		/** Optional URL to the channel's avatar image */
 		channelAvatarUrl,
+		/** Optional raw subscriber count string for the channel */
 		subscriberCount,
+		/** Full video description text (may contain newlines, links, etc.) */
 		description,
+		/** Optional raw like count string */
 		likeCount
 	}: {
 		title: string;
@@ -21,8 +42,15 @@
 		likeCount?: string;
 	} = $props();
 
+	/** Controls whether the description is fully expanded or clamped to 3 lines */
 	let expanded = $state(false);
 
+	/**
+	 * Abbreviates a numeric string with K/M/B suffixes.
+	 * Used for view counts, like counts, and subscriber counts.
+	 * @param count - Raw number string
+	 * @returns Abbreviated form like "1.2M" or "450K"
+	 */
 	function formatNumber(count: string): string {
 		const n = parseInt(count);
 		if (isNaN(n)) return count;
@@ -32,6 +60,12 @@
 		return `${n}`;
 	}
 
+	/**
+	 * Formats a date string into a locale-friendly display format (e.g., "Jan 15, 2024").
+	 * Used as the title tooltip on the relative time display.
+	 * @param dateStr - ISO date string
+	 * @returns Formatted date string
+	 */
 	function formatDate(dateStr: string): string {
 		return new Date(dateStr).toLocaleDateString('en-US', {
 			year: 'numeric',
@@ -40,6 +74,12 @@
 		});
 	}
 
+	/**
+	 * Converts a date string into a relative "time ago" label.
+	 * Uses approximate month (30d) and year (365d) lengths.
+	 * @param dateStr - ISO date string
+	 * @returns Relative time string like "3 days ago"
+	 */
 	function formatTimeAgo(dateStr: string): string {
 		const now = Date.now();
 		const then = new Date(dateStr).getTime();
@@ -59,6 +99,7 @@
 		return `${years} year${years !== 1 ? 's' : ''} ago`;
 	}
 
+	/* Derived formatted values: auto-recompute when props change */
 	let formattedViews = $derived(formatNumber(viewCount));
 	let formattedDate = $derived(formatDate(publishedAt));
 	let timeAgo = $derived(formatTimeAgo(publishedAt));
@@ -90,7 +131,7 @@
 		{/if}
 	</div>
 
-	<!-- Channel info -->
+	<!-- Channel info: avatar (or initial letter fallback), name link, and subscriber count -->
 	<div class="flex items-center gap-3 py-2">
 		<a href="/channel/{channelId}" class="shrink-0">
 			{#if channelAvatarUrl}
@@ -122,7 +163,9 @@
 		</div>
 	</div>
 
-	<!-- Description -->
+	<!-- Description: expandable region.
+	     In collapsed state, CSS line-clamp-3 truncates to 3 lines.
+	     whitespace-pre-wrap preserves the original line breaks from the description text. -->
 	{#if description}
 		<div
 			class="bg-yt-surface text-yt-text rounded-xl p-3 text-sm"

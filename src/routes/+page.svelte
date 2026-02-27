@@ -1,3 +1,16 @@
+<!--
+	@component Home Page
+
+	Renders the main landing page with two distinct layouts depending on
+	whether the user is authenticated:
+	- Authenticated: shows a horizontal subscription channel bar + trending videos.
+	- Anonymous: shows category filter chips + trending videos.
+
+	The video grid uses VirtualFeed for efficient rendering of large lists,
+	with responsive column counts calculated from the viewport width.
+	Pull-to-refresh support (via invalidateAll) lets mobile users swipe down
+	to reload the feed data from the server.
+-->
 <script lang="ts">
 	import VideoCard from '$lib/components/VideoCard.svelte';
 	import VirtualFeed from '$lib/components/VirtualFeed.svelte';
@@ -10,10 +23,14 @@
 
 	let { data }: { data: PageData } = $props();
 
+	// '0' maps to the synthetic "All" category chip prepended in the template
 	let selectedCategory = $state('0');
 
 	let columns = $state(1);
 
+	/* Responsive column calculation: listens to window resize and maps
+	 * breakpoints to column counts. The effect cleanup removes the listener
+	 * to avoid leaks when this component is destroyed. */
 	$effect(() => {
 		function updateColumns() {
 			const w = window.innerWidth;
@@ -38,8 +55,10 @@
 	<meta name="description" content="YouTube without Shorts" />
 </svelte:head>
 
+<!-- Pull-to-refresh wraps the entire page; triggers a full server reload -->
 <PullToRefresh onRefresh={() => invalidateAll()}>
 	<div class="mx-auto max-w-screen-2xl px-4 py-4">
+		<!-- Conditional rendering: auth users get subscriptions, anon users get category chips -->
 		{#if data.authenticated && 'subscriptions' in data}
 			{#if data.subscriptions && data.subscriptions.length > 0}
 				<section class="mb-6">
@@ -63,6 +82,7 @@
 			</section>
 		{/if}
 
+		<!-- Trending video grid: uses VirtualFeed for windowed rendering, falls back to skeletons -->
 		<section>
 			{#if data.trending && data.trending.length > 0}
 				<VirtualFeed

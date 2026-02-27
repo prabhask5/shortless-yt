@@ -1,19 +1,46 @@
 <script lang="ts">
+	/**
+	 * @fileoverview DarkModeToggle component for switching between light and dark themes.
+	 * @component
+	 *
+	 * Persists the user's theme preference in localStorage under the key "theme".
+	 * The theme is applied by toggling "dark" / "light" CSS classes on the <html> element
+	 * (document.documentElement). Tailwind and the app's custom CSS properties (--yt-bg,
+	 * --yt-text, etc.) respond to these classes to switch the entire color scheme.
+	 *
+	 * On mount, the $effect reads the stored preference and applies it. If no preference
+	 * is stored, it defaults to dark mode (isDark = true), matching YouTube's default.
+	 *
+	 * The button shows a sun icon in dark mode (click to switch to light) and a moon
+	 * icon in light mode (click to switch to dark), which is the conventional pattern.
+	 */
+
+	/** Current theme state; defaults to dark mode */
 	let isDark = $state(true);
 
+	/*
+	 * On mount: read the stored theme from localStorage and apply the correct
+	 * CSS class to <html>. This runs once on component initialization.
+	 * We use $effect to ensure we're in the browser (document/localStorage available).
+	 */
 	$effect(() => {
+		/* Read stored preference — only runs once since localStorage is not reactive */
 		const stored = localStorage.getItem('theme');
-		if (stored === 'light') {
-			isDark = false;
-			document.documentElement.classList.remove('dark');
-			document.documentElement.classList.add('light');
-		} else {
-			isDark = true;
-			document.documentElement.classList.remove('light');
-			document.documentElement.classList.add('dark');
-		}
+		const shouldBeDark = stored !== 'light';
+
+		/* Apply the correct class to <html> for Tailwind/CSS custom properties */
+		document.documentElement.classList.toggle('dark', shouldBeDark);
+		document.documentElement.classList.toggle('light', !shouldBeDark);
+
+		/* Sync component state without re-triggering — $effect tracks reads, not writes */
+		isDark = shouldBeDark;
 	});
 
+	/**
+	 * Toggles between dark and light mode.
+	 * Updates the component state, swaps the CSS class on <html>, and
+	 * persists the new preference to localStorage for future visits.
+	 */
 	function toggle() {
 		isDark = !isDark;
 		if (isDark) {
@@ -34,7 +61,7 @@
 	aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
 >
 	{#if isDark}
-		<!-- Sun icon -->
+		<!-- Sun icon: shown in dark mode, clicking it switches to light mode -->
 		<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 			<path
 				stroke-linecap="round"
@@ -43,7 +70,7 @@
 			/>
 		</svg>
 	{:else}
-		<!-- Moon icon -->
+		<!-- Moon icon: shown in light mode, clicking it switches to dark mode -->
 		<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 			<path
 				stroke-linecap="round"

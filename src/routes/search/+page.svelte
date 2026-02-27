@@ -1,3 +1,14 @@
+<!--
+	@component Search Results Page
+
+	Displays search results with type filter chips (Videos / Channels / Playlists).
+	Each result type renders through its own VirtualFeed with a type-appropriate
+	card component, since the layout and row heights differ between videos,
+	channels, and playlists.
+
+	Switching the type filter triggers a client-side navigation (via `goto`) that
+	re-runs the server load with the new `type` param, preserving the search query.
+-->
 <script lang="ts">
 	import VideoCard from '$lib/components/VideoCard.svelte';
 	import ChannelCard from '$lib/components/ChannelCard.svelte';
@@ -10,12 +21,16 @@
 
 	let { data }: { data: PageData } = $props();
 
+	// Static filter chip definitions; the selected state comes from `data.type`
 	const typeFilters = [
 		{ label: 'Videos', value: 'video' },
 		{ label: 'Channels', value: 'channel' },
 		{ label: 'Playlists', value: 'playlist' }
 	];
 
+	/* Navigate to the same search page with a different type filter.
+	 * This triggers a full server re-load so results come from the
+	 * correct YouTube search endpoint. */
 	function handleTypeChange(type: string) {
 		const q = data.query ? `q=${encodeURIComponent(data.query)}&` : '';
 		goto(`/search?${q}type=${encodeURIComponent(type)}`);
@@ -29,11 +44,13 @@
 <div class="mx-auto max-w-screen-xl px-4 py-4">
 	<FilterChips filters={typeFilters} selected={data.type} onChange={handleTypeChange} />
 
+	<!-- Empty state: prompt if no query, "no results" if query returned nothing -->
 	{#if !data.query}
 		<p class="text-yt-text-secondary mt-8 text-center">Search for videos, channels, or playlists</p>
 	{:else if data.results.length === 0}
 		<p class="text-yt-text-secondary mt-8 text-center">No results found for "{data.query}"</p>
 	{:else}
+		<!-- Each result type uses its own VirtualFeed with a matching card component -->
 		<div class="mt-4">
 			{#if data.type === 'channel'}
 				<VirtualFeed
@@ -71,6 +88,7 @@
 			{/if}
 		</div>
 
+		<!-- Server-side pagination: the "Load more" link adds the nextPageToken to the URL -->
 		{#if data.nextPageToken}
 			<div class="mt-6 flex justify-center">
 				<a
