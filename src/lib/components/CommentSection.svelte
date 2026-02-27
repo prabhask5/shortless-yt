@@ -3,12 +3,9 @@
 	 * @fileoverview CommentSection component for the video watch page.
 	 * @component
 	 *
-	 * Displays a paginated list of top-level comments for a video. Comments are loaded
-	 * in batches using a "load more" button pattern (not infinite scroll), which gives
-	 * the user explicit control over when to fetch the next page.
-	 *
-	 * Each comment shows the author avatar, name, relative timestamp, comment text,
-	 * like count, and a reply count button (replies themselves are not expanded inline).
+	 * Displays a paginated list of top-level comments for a video. Each comment
+	 * can be expanded to show its replies, which are fetched on demand from the
+	 * /api/replies endpoint.
 	 *
 	 * States:
 	 * - Loading: shows a spinning indicator
@@ -18,13 +15,9 @@
 	import type { CommentItem } from '$lib/types';
 
 	let {
-		/** Array of comment objects already loaded */
 		comments,
-		/** Whether a page of comments is currently being fetched */
 		loading,
-		/** Callback to fetch the next page of comments */
 		onLoadMore,
-		/** Whether there are more comments available beyond what's loaded */
 		hasMore
 	}: {
 		comments: CommentItem[];
@@ -33,11 +26,11 @@
 		hasMore: boolean;
 	} = $props();
 
-	/**
-	 * Converts a date string into a relative "time ago" label for comment timestamps.
-	 * @param dateStr - ISO date string from the comment data
-	 * @returns Relative time string like "2 hours ago" or "3 months ago"
-	 */
+	/** Track which comment threads have their replies expanded */
+	let expandedReplies = $state<
+		Record<string, { replies: CommentItem[]; loading: boolean; nextPageToken?: string }>
+	>({});
+
 	function formatTimeAgo(dateStr: string): string {
 		const now = Date.now();
 		const then = new Date(dateStr).getTime();
@@ -57,17 +50,86 @@
 		return `${years} year${years !== 1 ? 's' : ''} ago`;
 	}
 
-	/**
-	 * Abbreviates a comment's like count. Returns empty string for 0 likes
-	 * so the like icon is hidden entirely (no "0" displayed).
-	 * @param count - The numeric like count
-	 * @returns Abbreviated string like "1.2K" or empty string for zero
-	 */
 	function formatLikeCount(count: number): string {
 		if (count === 0) return '';
 		if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
 		if (count >= 1_000) return `${(count / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
 		return `${count}`;
+	}
+
+	async function toggleReplies(commentId: string) {
+		// If already expanded, collapse
+		if (expandedReplies[commentId]) {
+			const { [commentId]: _, ...rest } = expandedReplies;
+			expandedReplies = rest;
+			return;
+		}
+
+		// Start loading
+		expandedReplies = {
+			...expandedReplies,
+			[commentId]: { replies: [], loading: true }
+		};
+
+		try {
+			const res = await fetch(`/api/replies?commentId=${encodeURIComponent(commentId)}`);
+			if (res.ok) {
+				const data = (await res.json()) as {
+					replies: CommentItem[];
+					nextPageToken?: string;
+				};
+				expandedReplies = {
+					...expandedReplies,
+					[commentId]: {
+						replies: data.replies,
+						loading: false,
+						nextPageToken: data.nextPageToken
+					}
+				};
+			} else {
+				// Remove on failure
+				const { [commentId]: _, ...rest } = expandedReplies;
+				expandedReplies = rest;
+			}
+		} catch {
+			const { [commentId]: _, ...rest } = expandedReplies;
+			expandedReplies = rest;
+		}
+	}
+
+	async function loadMoreReplies(commentId: string) {
+		const entry = expandedReplies[commentId];
+		if (!entry || !entry.nextPageToken || entry.loading) return;
+
+		expandedReplies = {
+			...expandedReplies,
+			[commentId]: { ...entry, loading: true }
+		};
+
+		try {
+			const res = await fetch(
+				`/api/replies?commentId=${encodeURIComponent(commentId)}&pageToken=${encodeURIComponent(entry.nextPageToken)}`
+			);
+			if (res.ok) {
+				const data = (await res.json()) as {
+					replies: CommentItem[];
+					nextPageToken?: string;
+				};
+				expandedReplies = {
+					...expandedReplies,
+					[commentId]: {
+						replies: [...entry.replies, ...data.replies],
+						loading: false,
+						nextPageToken: data.nextPageToken
+					}
+				};
+			}
+		} catch {
+			expandedReplies = {
+				...expandedReplies,
+				[commentId]: { ...entry, loading: false }
+			};
+		}
 	}
 </script>
 
@@ -106,17 +168,78 @@
 					{/if}
 
 					{#if comment.replyCount > 0}
-						<button class="text-yt-accent text-xs font-medium hover:underline">
-							{comment.replyCount}
-							{comment.replyCount === 1 ? 'reply' : 'replies'}
+						<button
+							onclick={() => toggleReplies(comment.id)}
+							class="text-yt-accent text-xs font-medium hover:underline"
+						>
+							{#if expandedReplies[comment.id]}
+								Hide {comment.replyCount}
+								{comment.replyCount === 1 ? 'reply' : 'replies'}
+							{:else}
+								{comment.replyCount}
+								{comment.replyCount === 1 ? 'reply' : 'replies'}
+							{/if}
 						</button>
 					{/if}
 				</div>
+
+				<!-- Replies section -->
+				{#if expandedReplies[comment.id]}
+					<div class="border-yt-border mt-3 flex flex-col gap-3 border-l-2 pl-4">
+						{#each expandedReplies[comment.id].replies as reply (reply.id)}
+							<div class="flex gap-2">
+								<img
+									src={reply.authorAvatarUrl}
+									alt={reply.authorName}
+									class="h-6 w-6 shrink-0 rounded-full"
+									loading="lazy"
+								/>
+								<div class="min-w-0 flex-1">
+									<div class="flex items-center gap-2">
+										<span class="text-yt-text text-xs font-medium">{reply.authorName}</span>
+										<span class="text-yt-text-secondary text-xs"
+											>{formatTimeAgo(reply.publishedAt)}</span
+										>
+									</div>
+									<p class="text-yt-text mt-0.5 text-sm break-words whitespace-pre-wrap">
+										{reply.text}
+									</p>
+									{#if reply.likeCount > 0}
+										<span class="text-yt-text-secondary mt-1 flex items-center gap-1 text-xs">
+											<svg class="h-3 w-3" fill="currentColor" viewBox="0 0 24 24">
+												<path
+													d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 2 7.59 8.59C7.22 8.95 7 9.45 7 10v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z"
+												/>
+											</svg>
+											{formatLikeCount(reply.likeCount)}
+										</span>
+									{/if}
+								</div>
+							</div>
+						{/each}
+
+						{#if expandedReplies[comment.id].loading}
+							<div class="flex justify-center py-2">
+								<div
+									class="border-yt-text-secondary border-t-yt-accent h-4 w-4 animate-spin rounded-full border-2"
+								></div>
+							</div>
+						{/if}
+
+						{#if expandedReplies[comment.id].nextPageToken && !expandedReplies[comment.id].loading}
+							<button
+								onclick={() => loadMoreReplies(comment.id)}
+								class="text-yt-accent text-xs font-medium hover:underline"
+							>
+								Show more replies
+							</button>
+						{/if}
+					</div>
+				{/if}
 			</div>
 		</div>
 	{/each}
 
-	<!-- Loading spinner: shown while fetching the next page of comments -->
 	{#if loading}
 		<div class="flex justify-center py-4">
 			<div
@@ -125,7 +248,6 @@
 		</div>
 	{/if}
 
-	<!-- Load-more button: only shown when there are additional pages and we're not currently loading -->
 	{#if hasMore && !loading}
 		<button
 			onclick={onLoadMore}
@@ -135,7 +257,6 @@
 		</button>
 	{/if}
 
-	<!-- Empty state: shown when loading is complete and no comments exist -->
 	{#if !loading && comments.length === 0}
 		<p class="text-yt-text-secondary py-4 text-center text-sm">No comments yet</p>
 	{/if}

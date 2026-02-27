@@ -1,15 +1,15 @@
 /**
- * @fileoverview Search page server load — fetches all selected result types in parallel.
+ * @fileoverview Search page server load — uses YouTube's single mixed search endpoint.
  *
- * By default, all three types (video, channel, playlist) are fetched simultaneously.
+ * By default, all three types (video, channel, playlist) are searched in one API call,
+ * which returns results interleaved by relevance (YouTube's natural ordering).
  * The `types` query parameter accepts a comma-separated list to filter to specific types.
  *
- * Results are returned as a tagged union array so the client can render the
- * appropriate card component for each result.
+ * Video results are filtered for broken videos and Shorts after the search.
  */
 import type { PageServerLoad } from './$types';
 import type { VideoItem, ChannelItem, PlaylistItem } from '$lib/types';
-import { searchVideos, searchChannels, searchPlaylists } from '$lib/server/youtube';
+import { searchMixed } from '$lib/server/youtube';
 import { filterOutShorts, filterOutBrokenVideos } from '$lib/server/shorts';
 
 export type SearchResult =
@@ -44,65 +44,45 @@ export const load: PageServerLoad = async ({ url }) => {
 	}
 
 	try {
+		const { results: rawResults, nextPageToken: nextToken } = await searchMixed(
+			query,
+			types,
+			pageToken
+		);
+
+		console.log('[SEARCH PAGE] Mixed search returned', rawResults.length, 'results');
+
+		// Filter video results: remove broken videos and shorts, keep channels/playlists as-is
+		const videoItems = rawResults
+			.filter((r): r is { type: 'video'; item: VideoItem } => r.type === 'video')
+			.map((r) => r.item);
+
+		const cleanVideos = filterOutBrokenVideos(videoItems);
+		const filteredVideos = await filterOutShorts(cleanVideos);
+		const filteredVideoIds = new Set(filteredVideos.map((v) => v.id));
+
+		console.log(
+			'[SEARCH PAGE] After filtering:',
+			filteredVideos.length,
+			'of',
+			videoItems.length,
+			'videos remain'
+		);
+
+		// Reconstruct results in original order, replacing video items with filtered versions
 		const results: SearchResult[] = [];
-		const fetches: Promise<void>[] = [];
-
-		if (types.includes('video')) {
-			fetches.push(
-				searchVideos(query, { pageToken, videoDuration: 'medium' })
-					.then(async (result) => {
-						console.log(
-							'[SEARCH PAGE] Video search returned',
-							result.items.length,
-							'results before filtering'
-						);
-						const clean = filterOutBrokenVideos(result.items);
-						const filtered = await filterOutShorts(clean);
-						console.log('[SEARCH PAGE] After filtering:', filtered.length, 'videos remain');
-						for (const item of filtered) {
-							results.push({ type: 'video', item });
-						}
-					})
-					.catch((err) => {
-						console.error('[SEARCH PAGE] Video search FAILED:', err);
-					})
-			);
+		for (const r of rawResults) {
+			if (r.type === 'video') {
+				if (filteredVideoIds.has(r.item.id)) {
+					results.push(r);
+				}
+			} else {
+				results.push(r);
+			}
 		}
 
-		if (types.includes('channel')) {
-			fetches.push(
-				searchChannels(query, pageToken)
-					.then((result) => {
-						console.log('[SEARCH PAGE] Channel search returned', result.items.length, 'results');
-						for (const item of result.items) {
-							results.push({ type: 'channel', item });
-						}
-					})
-					.catch((err) => {
-						console.error('[SEARCH PAGE] Channel search FAILED:', err);
-					})
-			);
-		}
-
-		if (types.includes('playlist')) {
-			fetches.push(
-				searchPlaylists(query, pageToken)
-					.then((result) => {
-						console.log('[SEARCH PAGE] Playlist search returned', result.items.length, 'results');
-						for (const item of result.items) {
-							results.push({ type: 'playlist', item });
-						}
-					})
-					.catch((err) => {
-						console.error('[SEARCH PAGE] Playlist search FAILED:', err);
-					})
-			);
-		}
-
-		await Promise.all(fetches);
-		console.log('[SEARCH PAGE] Total combined results:', results.length);
-
-		return { query, types, results, nextPageToken: pageToken };
+		console.log('[SEARCH PAGE] Final results:', results.length);
+		return { query, types, results, nextPageToken: nextToken };
 	} catch (err) {
 		console.error('[SEARCH PAGE] Search FAILED:', err);
 		return { query, types, results: [] as SearchResult[], nextPageToken: undefined };

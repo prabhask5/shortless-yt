@@ -19,8 +19,8 @@
 	/** @prop initialQuery - Pre-fills the search input, used when returning to a search results page */
 	let { initialQuery = '' }: { initialQuery?: string } = $props();
 
-	// svelte-ignore state_referenced_locally
-	let query = $state(initialQuery);
+	/** Writable derived: syncs from initialQuery on navigation, but user typing overwrites it. */
+	let query = $derived(initialQuery);
 	/** Autocomplete suggestions returned from the API */
 	let suggestions = $state<string[]>([]);
 	/** Whether the autocomplete dropdown is visible */

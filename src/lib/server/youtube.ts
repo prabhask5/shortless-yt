@@ -372,6 +372,123 @@ export async function searchPlaylists(
 	return result;
 }
 
+/**
+ * Search YouTube with mixed result types (video, channel, playlist) in a single API call.
+ *
+ * Uses the YouTube search endpoint with `type` set to a comma-separated list of types.
+ * This returns results in YouTube's natural relevance order with types interleaved,
+ * rather than grouping all videos, then all channels, then all playlists.
+ *
+ * Video results are hydrated with full details (duration, statistics) via a follow-up
+ * call to {@link getVideoDetails}. Channel and playlist results use snippet data only
+ * from the search response (no follow-up detail fetch) to conserve API quota.
+ *
+ * @param query     - The search query string.
+ * @param types     - Array of types to include (e.g. ['video', 'channel', 'playlist']).
+ * @param pageToken - Optional pagination token.
+ * @returns Object with tagged union results array and nextPageToken.
+ */
+export async function searchMixed(
+	query: string,
+	types: Array<'video' | 'channel' | 'playlist'>,
+	pageToken?: string
+): Promise<{
+	results: Array<
+		| { type: 'video'; item: VideoItem }
+		| { type: 'channel'; item: ChannelItem }
+		| { type: 'playlist'; item: PlaylistItem }
+	>;
+	nextPageToken?: string;
+}> {
+	const typeStr = types.join(',');
+	const cacheKey = `search:mixed:${query}:${typeStr}:${pageToken ?? ''}`;
+	const cached = publicCache.get<{
+		results: Array<
+			| { type: 'video'; item: VideoItem }
+			| { type: 'channel'; item: ChannelItem }
+			| { type: 'playlist'; item: PlaylistItem }
+		>;
+		nextPageToken?: string;
+	}>(cacheKey);
+	if (cached) {
+		console.log(
+			`[YOUTUBE] searchMixed CACHE HIT for "${query}" types=${typeStr}, ${cached.results.length} results`
+		);
+		return cached;
+	}
+	console.log(
+		`[YOUTUBE] searchMixed CACHE MISS for "${query}" types=${typeStr}, fetching from API...`
+	);
+
+	const params: Record<string, string> = {
+		part: 'snippet',
+		type: typeStr,
+		q: query,
+		maxResults: '25'
+	};
+	if (pageToken) params.pageToken = pageToken;
+
+	const data = (await youtubeApiFetch('search', params)) as Record<string, unknown>;
+	const rawItems = (data.items as Record<string, unknown>[]) ?? [];
+	const nextToken = data.nextPageToken as string | undefined;
+
+	console.log(`[YOUTUBE] searchMixed for "${query}" returned ${rawItems.length} raw items`);
+
+	// Separate items by type and collect IDs for detail fetches
+	const videoIds: string[] = [];
+	const itemOrder: Array<{ type: 'video' | 'channel' | 'playlist'; index: number }> = [];
+	const snippetChannels: ChannelItem[] = [];
+	const snippetPlaylists: PlaylistItem[] = [];
+
+	for (const raw of rawItems) {
+		const idObj = raw.id as Record<string, string> | undefined;
+		const kind = idObj?.kind as string | undefined;
+
+		if (kind === 'youtube#video' && idObj?.videoId) {
+			itemOrder.push({ type: 'video', index: videoIds.length });
+			videoIds.push(idObj.videoId);
+		} else if (kind === 'youtube#channel' && idObj?.channelId) {
+			itemOrder.push({ type: 'channel', index: snippetChannels.length });
+			snippetChannels.push(parseChannelItem(raw));
+		} else if (kind === 'youtube#playlist' && idObj?.playlistId) {
+			itemOrder.push({ type: 'playlist', index: snippetPlaylists.length });
+			snippetPlaylists.push(parsePlaylistItem(raw));
+		}
+	}
+
+	// Hydrate video details (duration, stats)
+	const videoDetails = videoIds.length > 0 ? await getVideoDetails(videoIds) : [];
+	// Build a lookup map since getVideoDetails may reorder
+	const videoMap = new Map<string, VideoItem>();
+	for (const v of videoDetails) videoMap.set(v.id, v);
+
+	console.log(
+		`[YOUTUBE] searchMixed detail fetch — ${videoDetails.length} videos, ${snippetChannels.length} channels, ${snippetPlaylists.length} playlists`
+	);
+
+	// Reconstruct results in YouTube's original order
+	const results: Array<
+		| { type: 'video'; item: VideoItem }
+		| { type: 'channel'; item: ChannelItem }
+		| { type: 'playlist'; item: PlaylistItem }
+	> = [];
+
+	for (const entry of itemOrder) {
+		if (entry.type === 'video') {
+			const video = videoMap.get(videoIds[entry.index]);
+			if (video) results.push({ type: 'video', item: video });
+		} else if (entry.type === 'channel') {
+			results.push({ type: 'channel', item: snippetChannels[entry.index] });
+		} else {
+			results.push({ type: 'playlist', item: snippetPlaylists[entry.index] });
+		}
+	}
+
+	const result = { results, nextPageToken: nextToken };
+	publicCache.set(cacheKey, result, FIVE_MINUTES);
+	return result;
+}
+
 // ===================================================================
 // Detail fetchers
 // ===================================================================
@@ -708,6 +825,68 @@ export async function getComments(
 	const pageInfoRaw = data.pageInfo as Record<string, unknown> | undefined;
 	const result: PaginatedResult<CommentItem> = {
 		items: comments,
+		pageInfo: {
+			nextPageToken: data.nextPageToken as string | undefined,
+			totalResults: (pageInfoRaw?.totalResults as number) ?? 0
+		}
+	};
+
+	publicCache.set(cacheKey, result, FIVE_MINUTES);
+	return result;
+}
+
+/**
+ * Fetch replies to a specific comment thread.
+ *
+ * Uses the `comments` endpoint (not `commentThreads`) with `parentId` to get
+ * the replies nested under a top-level comment.
+ *
+ * @param commentId - The top-level comment thread ID.
+ * @param pageToken - Optional pagination token for the next page.
+ * @returns Paginated list of reply comment items.
+ */
+export async function getCommentReplies(
+	commentId: string,
+	pageToken?: string
+): Promise<PaginatedResult<CommentItem>> {
+	const cacheKey = `replies:${commentId}:${pageToken ?? ''}`;
+	const cached = publicCache.get<PaginatedResult<CommentItem>>(cacheKey);
+	if (cached) {
+		console.log(
+			`[YOUTUBE] getCommentReplies CACHE HIT for ${commentId}, ${cached.items.length} replies`
+		);
+		return cached;
+	}
+	console.log(`[YOUTUBE] getCommentReplies CACHE MISS for ${commentId}, fetching from API...`);
+
+	const params: Record<string, string> = {
+		part: 'snippet',
+		parentId: commentId,
+		maxResults: '20'
+	};
+	if (pageToken) params.pageToken = pageToken;
+
+	const data = (await youtubeApiFetch('comments', params)) as Record<string, unknown>;
+	const items = (data.items as Record<string, unknown>[]) ?? [];
+
+	const replies: CommentItem[] = items.map((item) => {
+		const snippet = item.snippet as Record<string, unknown> | undefined;
+		return {
+			id: (item.id as string) ?? '',
+			authorName: (snippet?.authorDisplayName as string) ?? '',
+			authorAvatarUrl: (snippet?.authorProfileImageUrl as string) ?? '',
+			text: (snippet?.textOriginal as string) ?? (snippet?.textDisplay as string) ?? '',
+			likeCount: (snippet?.likeCount as number) ?? 0,
+			publishedAt: (snippet?.publishedAt as string) ?? '',
+			replyCount: 0
+		};
+	});
+
+	console.log(`[YOUTUBE] getCommentReplies for ${commentId} returned ${replies.length} replies`);
+
+	const pageInfoRaw = data.pageInfo as Record<string, unknown> | undefined;
+	const result: PaginatedResult<CommentItem> = {
+		items: replies,
 		pageInfo: {
 			nextPageToken: data.nextPageToken as string | undefined,
 			totalResults: (pageInfoRaw?.totalResults as number) ?? 0
