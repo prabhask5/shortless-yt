@@ -16,23 +16,48 @@
 	let needRefresh = $state(false);
 	let updateSW: ((reloadPage?: boolean) => Promise<void>) | undefined;
 
-	onMount(async () => {
+	onMount(() => {
 		/* Dynamically import the PWA registration module. This is only available
 		 * in production builds — in dev mode, the import resolves to a no-op. */
-		const { registerSW } = await import('virtual:pwa-register');
-
-		updateSW = registerSW({
-			/* Called when a new service worker is installed and waiting to activate.
-			 * We show the toast so the user can choose when to reload. */
-			onNeedRefresh() {
-				needRefresh = true;
-			},
-			/* Called when all assets have been precached (first install or update).
-			 * No user action needed here. */
-			onOfflineReady() {
-				// Silently ready — no toast needed for offline readiness
-			}
+		import('virtual:pwa-register').then(({ registerSW }) => {
+			updateSW = registerSW({
+				/* Check for SW updates every 15 minutes while the app is open. Without
+				 * this, updates are only detected on navigation — which rarely happens
+				 * in a single-page PWA that stays open in a tab. */
+				immediate: true,
+				onRegisteredSW(_swUrl, registration) {
+					if (!registration) return;
+					setInterval(
+						async () => {
+							if (registration.installing || !navigator) return;
+							/* If the SW serves from cache (most do), hit the server to
+							 * compare the SW script. If byte-different, the browser
+							 * triggers the update flow → onNeedRefresh fires. */
+							if ('connection' in navigator && !navigator.onLine) return;
+							await registration.update();
+						},
+						15 * 60 * 1000
+					);
+				},
+				onNeedRefresh() {
+					needRefresh = true;
+				},
+				onOfflineReady() {
+					// Silently ready — no toast needed for offline readiness
+				}
+			});
 		});
+
+		/* Also check when the user returns to the tab (e.g. switching back from
+		 * another app on mobile). This catches deployments that happened while
+		 * the PWA was backgrounded. */
+		function handleVisibilityChange() {
+			if (document.visibilityState === 'visible' && navigator.serviceWorker?.controller) {
+				navigator.serviceWorker.getRegistration().then((reg) => reg?.update());
+			}
+		}
+		document.addEventListener('visibilitychange', handleVisibilityChange);
+		return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
 	});
 
 	/** Activate the waiting service worker and reload the page to load new assets. */
