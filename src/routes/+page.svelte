@@ -4,7 +4,7 @@
 	Renders the main landing page with two distinct layouts depending on
 	whether the user is authenticated:
 	- Authenticated: shows subscriptions bar + recent videos from subscribed channels.
-	- Anonymous: shows category filter chips + trending videos.
+	- Anonymous: shows category filter chips + trending videos with infinite scroll.
 
 	Uses SvelteKit streaming for instant page load with YouTube-style skeletons.
 -->
@@ -15,7 +15,9 @@
 	import CategoryChips from '$lib/components/CategoryChips.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import PullToRefresh from '$lib/components/PullToRefresh.svelte';
+	import { useColumns } from '$lib/stores/columns.svelte';
 	import { invalidateAll, goto } from '$app/navigation';
+	import type { VideoItem } from '$lib/types';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -24,19 +26,47 @@
 		'selectedCategory' in data ? (data.selectedCategory as string) : '0'
 	);
 
-	let columns = $state(1);
+	const cols = useColumns();
+
+	/* ── Anon trending: infinite scroll state ── */
+	let trendingItems = $state<VideoItem[]>([]);
+	let trendingNextToken = $state<string | undefined>(undefined);
+	let trendingLoading = $state(false);
+
+	/* Reset state when streamed data resolves */
+	$effect(() => {
+		if (!data.authenticated && 'streamed' in data && data.streamed.anonData) {
+			data.streamed.anonData.then((anonData) => {
+				trendingItems = anonData.trending ?? [];
+				trendingNextToken = anonData.nextPageToken;
+			});
+		}
+	});
+
+	async function loadMoreTrending() {
+		if (!trendingNextToken || trendingLoading) return;
+		trendingLoading = true;
+		try {
+			let url = `/api/videos?source=trending&pageToken=${encodeURIComponent(trendingNextToken)}`;
+			if (selectedCategory !== '0') url += `&categoryId=${encodeURIComponent(selectedCategory)}`;
+			const res = await fetch(url);
+			const json = await res.json();
+			trendingItems = [...trendingItems, ...json.items];
+			trendingNextToken = json.nextPageToken;
+		} finally {
+			trendingLoading = false;
+		}
+	}
+
+	/* ── Auth feed: just virtualize (flat array, no pagination) ── */
+	let authFeed = $state<VideoItem[]>([]);
 
 	$effect(() => {
-		function updateColumns() {
-			const w = window.innerWidth;
-			if (w >= 1280) columns = 4;
-			else if (w >= 1024) columns = 3;
-			else if (w >= 640) columns = 2;
-			else columns = 1;
+		if (data.authenticated && 'streamed' in data && data.streamed.authData) {
+			data.streamed.authData.then((authData) => {
+				authFeed = authData.feed ?? [];
+			});
 		}
-		updateColumns();
-		window.addEventListener('resize', updateColumns);
-		return () => window.removeEventListener('resize', updateColumns);
 	});
 
 	function handleCategoryChange(categoryId: string) {
@@ -94,13 +124,8 @@
 					</section>
 				{/if}
 				<section>
-					{#if authData.feed && authData.feed.length > 0}
-						<VirtualFeed
-							items={authData.feed}
-							{columns}
-							estimateRowHeight={columns === 1 ? 300 : 280}
-							gap={16}
-						>
+					{#if authFeed.length > 0}
+						<VirtualFeed items={authFeed} columns={cols.value} gap={16}>
 							{#snippet children(video)}
 								<VideoCard {video} />
 							{/snippet}
@@ -138,12 +163,14 @@
 					</section>
 				{/if}
 				<section>
-					{#if anonData.trending && anonData.trending.length > 0}
+					{#if trendingItems.length > 0}
 						<VirtualFeed
-							items={anonData.trending}
-							{columns}
-							estimateRowHeight={columns === 1 ? 300 : 280}
+							items={trendingItems}
+							columns={cols.value}
 							gap={16}
+							hasMore={!!trendingNextToken}
+							loadingMore={trendingLoading}
+							onLoadMore={loadMoreTrending}
 						>
 							{#snippet children(video)}
 								<VideoCard {video} />

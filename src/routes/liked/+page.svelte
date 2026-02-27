@@ -1,29 +1,49 @@
 <!--
 	@component Liked Videos Page
 
-	Displays the authenticated user's liked videos with streaming skeletons.
+	Displays the authenticated user's liked videos with streaming skeletons
+	and infinite scroll pagination.
 -->
 <script lang="ts">
 	import VideoCard from '$lib/components/VideoCard.svelte';
 	import VirtualFeed from '$lib/components/VirtualFeed.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
+	import { useColumns } from '$lib/stores/columns.svelte';
+	import type { VideoItem } from '$lib/types';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 
-	let columns = $state(1);
+	const cols = useColumns(3);
+
+	/* ── Infinite scroll state ── */
+	let allVideos = $state<VideoItem[]>([]);
+	let nextPageToken = $state<string | undefined>(undefined);
+	let loadingMore = $state(false);
 
 	$effect(() => {
-		function updateColumns() {
-			const w = window.innerWidth;
-			if (w >= 1024) columns = 3;
-			else if (w >= 640) columns = 2;
-			else columns = 1;
-		}
-		updateColumns();
-		window.addEventListener('resize', updateColumns);
-		return () => window.removeEventListener('resize', updateColumns);
+		data.streamed.likedData.then((likedData) => {
+			allVideos = likedData.videos;
+			nextPageToken = likedData.nextPageToken;
+		});
 	});
+
+	async function loadMore() {
+		if (!nextPageToken || loadingMore) return;
+		loadingMore = true;
+		try {
+			const params = new URLSearchParams({
+				source: 'liked',
+				pageToken: nextPageToken
+			});
+			const res = await fetch(`/api/videos?${params}`);
+			const json = await res.json();
+			allVideos = [...allVideos, ...json.items];
+			nextPageToken = json.nextPageToken;
+		} finally {
+			loadingMore = false;
+		}
+	}
 </script>
 
 <svelte:head>
@@ -39,13 +59,15 @@
 				<Skeleton variant="video-card" />
 			{/each}
 		</div>
-	{:then likedData}
-		{#if likedData.videos.length > 0}
+	{:then _likedData}
+		{#if allVideos.length > 0}
 			<VirtualFeed
-				items={likedData.videos}
-				{columns}
-				estimateRowHeight={columns === 1 ? 300 : 280}
+				items={allVideos}
+				columns={cols.value}
 				gap={16}
+				hasMore={!!nextPageToken}
+				{loadingMore}
+				onLoadMore={loadMore}
 			>
 				{#snippet children(video)}
 					<VideoCard {video} />

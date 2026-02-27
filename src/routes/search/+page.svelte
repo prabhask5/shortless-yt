@@ -3,6 +3,8 @@
 
 	Displays search results with multi-select type filter chips (Videos / Channels / Playlists).
 	Uses streaming so the page renders instantly with skeletons while results load.
+	Uses a manual "Load more" button instead of auto-scroll to prevent quota burn
+	(search costs 100 units per API call).
 -->
 <script lang="ts">
 	import VideoCard from '$lib/components/VideoCard.svelte';
@@ -24,27 +26,48 @@
 
 	let selectedTypes = $state<string[]>(['video', 'channel', 'playlist']);
 
-	/** Resolved results from streaming */
-	let resolvedResults = $state<SearchResult[]>([]);
+	let allResults = $state<SearchResult[]>([]);
+	let nextPageToken = $state<string | undefined>(undefined);
 	let isLoading = $state(true);
+	let loadingMore = $state(false);
 
 	$effect(() => {
 		if (data.streamed?.searchData) {
 			isLoading = true;
 			data.streamed.searchData.then((searchData) => {
-				resolvedResults = searchData.results as SearchResult[];
+				allResults = searchData.results as SearchResult[];
+				nextPageToken = searchData.nextPageToken;
 				isLoading = false;
 			});
 		} else if ('results' in data) {
-			resolvedResults = data.results as SearchResult[];
+			allResults = data.results as SearchResult[];
+			nextPageToken = undefined;
 			isLoading = false;
 		}
 	});
 
-	let filteredResults = $derived(resolvedResults.filter((r) => selectedTypes.includes(r.type)));
+	let filteredResults = $derived(allResults.filter((r) => selectedTypes.includes(r.type)));
 
 	function handleTypeChange(types: string | string[]) {
 		selectedTypes = Array.isArray(types) ? types : [types];
+	}
+
+	async function loadMore() {
+		if (!nextPageToken || loadingMore || !data.query) return;
+		loadingMore = true;
+		try {
+			const params = new URLSearchParams({
+				source: 'search',
+				pageToken: nextPageToken,
+				q: data.query
+			});
+			const res = await fetch(`/api/videos?${params}`);
+			const json = await res.json();
+			allResults = [...allResults, ...(json.results as SearchResult[])];
+			nextPageToken = json.nextPageToken;
+		} finally {
+			loadingMore = false;
+		}
 	}
 </script>
 
@@ -84,7 +107,7 @@
 		<p class="text-yt-text-secondary mt-8 text-center">No results found for "{data.query}"</p>
 	{:else}
 		<div class="mt-4">
-			<VirtualFeed items={filteredResults} columns={1} estimateRowHeight={100} gap={8}>
+			<VirtualFeed items={filteredResults} columns={1} gap={8}>
 				{#snippet children(result)}
 					{#if result.type === 'video'}
 						<VideoCard video={result.item} layout="horizontal" />
@@ -95,6 +118,21 @@
 					{/if}
 				{/snippet}
 			</VirtualFeed>
+			{#if nextPageToken}
+				<div class="flex justify-center py-6">
+					<button
+						onclick={loadMore}
+						disabled={loadingMore}
+						class="bg-yt-surface hover:bg-yt-surface-hover text-yt-text rounded-full px-6 py-2.5 text-sm font-medium transition-colors disabled:opacity-50"
+					>
+						{#if loadingMore}
+							Loading...
+						{:else}
+							Load more results
+						{/if}
+					</button>
+				</div>
+			{/if}
 		</div>
 	{/if}
 </div>

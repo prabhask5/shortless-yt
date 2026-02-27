@@ -45,7 +45,7 @@
 	</div>
 
 	<!-- Single-column VirtualFeed with numbered entries resembling YouTube's playlist view -->
-	<VirtualFeed items={numberedVideos} columns={1} estimateRowHeight={100} gap={12}>
+	<VirtualFeed items={numberedVideos} columns={1} gap={12}>
 		{#snippet children(entry)}
 			<div class="flex items-center gap-3">
 				<!-- Track number column -->

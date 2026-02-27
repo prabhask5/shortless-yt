@@ -1,58 +1,69 @@
 <script lang="ts" generics="T">
 	/**
-	 * @fileoverview VirtualFeed component for rendering lists of items in a grid.
+	 * @fileoverview VirtualFeed component — responsive grid with infinite scroll.
 	 * @component
 	 *
-	 * Currently renders items directly without virtualization (capped at 20 items).
-	 * Once confirmed working, virtualization via @tanstack/svelte-virtual will be
-	 * re-enabled for performance with larger lists.
+	 * Renders items in a CSS grid with responsive column count. Uses
+	 * IntersectionObserver on a sentinel element to detect when the user
+	 * scrolls near the bottom, triggering `onLoadMore` for pagination.
+	 *
+	 * No virtualization library — plain DOM rendering handles 100+ cards
+	 * without issue, and avoids nested-scroll-context problems with
+	 * pull-to-refresh and mobile UX.
 	 */
 	import type { Snippet } from 'svelte';
 
 	let {
 		items,
 		columns = 1,
-		estimateRowHeight: _estimateRowHeight = 300,
 		gap = 16,
-		children
+		children,
+		hasMore = false,
+		loadingMore = false,
+		onLoadMore
 	}: {
 		items: T[];
 		columns?: number;
-		estimateRowHeight?: number;
 		gap?: number;
 		children: Snippet<[T]>;
+		hasMore?: boolean;
+		loadingMore?: boolean;
+		onLoadMore?: () => void;
 	} = $props();
 
-	/** Cap items at 20 to keep DOM manageable. */
-	const MAX_ITEMS = 20;
+	let sentinelEl: HTMLDivElement | undefined = $state();
 
-	/** Capped items list. */
-	let cappedItems = $derived(items.slice(0, MAX_ITEMS));
-
-	/** Chunks items into rows of `columns` length for grid rendering. */
-	let rows = $derived.by(() => {
-		const result: T[][] = [];
-		for (let i = 0; i < cappedItems.length; i += columns) {
-			result.push(cappedItems.slice(i, i + columns));
-		}
-		return result;
+	$effect(() => {
+		if (!sentinelEl || !hasMore || !onLoadMore) return;
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (entries[0].isIntersecting && !loadingMore) {
+					onLoadMore();
+				}
+			},
+			{ rootMargin: '500px' }
+		);
+		observer.observe(sentinelEl);
+		return () => observer.disconnect();
 	});
 </script>
 
-<div style="display: flex; flex-direction: column; gap: {gap}px; width: 100%;">
-	{#each rows as rowItems, rowIndex (rowIndex)}
-		{#if columns > 1}
-			<div
-				style="display: grid; grid-template-columns: repeat({columns}, minmax(0, 1fr)); gap: {gap}px;"
-			>
-				{#each rowItems as item, i (i)}
-					{@render children(item)}
-				{/each}
-			</div>
-		{:else}
-			{#each rowItems as item, i (i)}
-				{@render children(item)}
-			{/each}
-		{/if}
+<div
+	style="display: grid; grid-template-columns: repeat({columns}, minmax(0, 1fr)); gap: {gap}px; width: 100%;"
+>
+	{#each items as item, i (i)}
+		{@render children(item)}
 	{/each}
 </div>
+
+{#if loadingMore}
+	<div class="flex justify-center py-4">
+		<div
+			class="border-yt-text-secondary h-6 w-6 animate-spin rounded-full border-2 border-t-transparent"
+		></div>
+	</div>
+{/if}
+
+{#if hasMore && !loadingMore}
+	<div bind:this={sentinelEl} aria-hidden="true"></div>
+{/if}

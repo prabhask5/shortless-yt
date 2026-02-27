@@ -3,32 +3,52 @@
 
 	Displays a channel's banner and profile immediately (blocking data),
 	then streams in videos and subscription status with skeleton placeholders.
+	Videos support infinite scroll pagination.
 -->
 <script lang="ts">
 	import VideoCard from '$lib/components/VideoCard.svelte';
 	import VirtualFeed from '$lib/components/VirtualFeed.svelte';
 	import FilterChips from '$lib/components/FilterChips.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
+	import { useColumns } from '$lib/stores/columns.svelte';
 	import { goto } from '$app/navigation';
+	import type { VideoItem } from '$lib/types';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 
-	let columns = $state(1);
+	const cols = useColumns();
 	let showAboutModal = $state(false);
 
+	/* ── Infinite scroll state ── */
+	let allVideos = $state<VideoItem[]>([]);
+	let nextPageToken = $state<string | undefined>(undefined);
+	let loadingMore = $state(false);
+
 	$effect(() => {
-		function updateColumns() {
-			const w = window.innerWidth;
-			if (w >= 1280) columns = 4;
-			else if (w >= 1024) columns = 3;
-			else if (w >= 640) columns = 2;
-			else columns = 1;
-		}
-		updateColumns();
-		window.addEventListener('resize', updateColumns);
-		return () => window.removeEventListener('resize', updateColumns);
+		data.streamed.channelData.then((channelData) => {
+			allVideos = channelData.videos;
+			nextPageToken = channelData.nextPageToken;
+		});
 	});
+
+	async function loadMore() {
+		if (!nextPageToken || loadingMore) return;
+		loadingMore = true;
+		try {
+			const params = new URLSearchParams({
+				source: 'channel',
+				pageToken: nextPageToken,
+				channelId: data.channel.id
+			});
+			const res = await fetch(`/api/videos?${params}`);
+			const json = await res.json();
+			allVideos = [...allVideos, ...json.items];
+			nextPageToken = json.nextPageToken;
+		} finally {
+			loadingMore = false;
+		}
+	}
 
 	$effect(() => {
 		if (showAboutModal) {
@@ -156,13 +176,15 @@
 						<Skeleton variant="video-card" />
 					{/each}
 				</div>
-			{:then channelData}
-				{#if channelData.videos.length > 0}
+			{:then _channelData}
+				{#if allVideos.length > 0}
 					<VirtualFeed
-						items={channelData.videos}
-						{columns}
-						estimateRowHeight={columns === 1 ? 300 : 280}
+						items={allVideos}
+						columns={cols.value}
 						gap={16}
+						hasMore={!!nextPageToken}
+						{loadingMore}
+						onLoadMore={loadMore}
 					>
 						{#snippet children(video)}
 							<VideoCard {video} />
