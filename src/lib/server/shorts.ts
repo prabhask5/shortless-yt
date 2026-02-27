@@ -220,3 +220,69 @@ export async function filterOutShorts(videos: VideoItem[]): Promise<VideoItem[]>
 	);
 	return results;
 }
+
+/**
+ * Filter out pseudo-deleted or broken videos from a list.
+ *
+ * YouTube keeps deleted/private/unavailable videos in playlists and search
+ * results as ghost entries. These typically have:
+ * - Empty or missing title (e.g. "Deleted video", "Private video", or blank)
+ * - No thumbnail URL
+ * - Zero duration
+ * - "0" view count with no other stats
+ *
+ * This filter runs before shorts filtering to avoid wasting HEAD probes on
+ * videos that would break the watch page anyway.
+ *
+ * @param videos - Array of video items to filter.
+ * @returns Array of videos with broken/deleted entries removed.
+ */
+export function filterOutBrokenVideos(videos: VideoItem[]): VideoItem[] {
+	console.log(`[FILTER] filterOutBrokenVideos called with ${videos.length} videos`);
+	const results: VideoItem[] = [];
+	const removed: string[] = [];
+
+	for (const video of videos) {
+		const reasons: string[] = [];
+
+		// No ID at all
+		if (!video.id) {
+			reasons.push('missing ID');
+		}
+
+		// No title or placeholder deleted/private titles
+		if (!video.title || /^(deleted|private)\s+video$/i.test(video.title.trim())) {
+			reasons.push(`bad title: "${video.title}"`);
+		}
+
+		// No thumbnail
+		if (!video.thumbnailUrl) {
+			reasons.push('no thumbnail');
+		}
+
+		// Zero duration AND zero views — likely a ghost entry
+		const hasZeroDuration =
+			!video.duration || video.duration === 'P0D' || video.duration === 'PT0S';
+		const hasZeroViews = !video.viewCount || video.viewCount === '0';
+		if (hasZeroDuration && hasZeroViews) {
+			reasons.push(`zero duration (${video.duration}) + zero views`);
+		}
+
+		if (reasons.length > 0) {
+			removed.push(`${video.id} (${reasons.join(', ')})`);
+		} else {
+			results.push(video);
+		}
+	}
+
+	if (removed.length > 0) {
+		console.log(`[FILTER] Removed ${removed.length} broken videos:`);
+		for (const r of removed) {
+			console.log(`[FILTER]   - ${r}`);
+		}
+	}
+	console.log(
+		`[FILTER] filterOutBrokenVideos final: ${results.length} videos remain from original ${videos.length}`
+	);
+	return results;
+}

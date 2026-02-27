@@ -10,8 +10,13 @@
  */
 import type { PageServerLoad } from './$types';
 import type { PaginatedResult, VideoItem, ChannelItem } from '$lib/types';
-import { getTrending, getVideoCategories, getSubscriptions } from '$lib/server/youtube';
-import { filterOutShorts } from '$lib/server/shorts';
+import {
+	getTrending,
+	getVideoCategories,
+	getSubscriptions,
+	getSubscriptionFeed
+} from '$lib/server/youtube';
+import { filterOutShorts, filterOutBrokenVideos } from '$lib/server/shorts';
 
 const emptyChannels: PaginatedResult<ChannelItem> = {
 	items: [],
@@ -27,38 +32,40 @@ export const load: PageServerLoad = async ({ locals }) => {
 	console.log('[HOME PAGE] Loading home page, authenticated:', !!locals.session);
 
 	if (locals.session) {
-		console.log('[HOME PAGE] Authenticated path — fetching subscriptions + trending in parallel');
-		const [subscriptions, trending] = await Promise.all([
+		console.log(
+			'[HOME PAGE] Authenticated path — fetching subscriptions + subscription feed in parallel'
+		);
+		const [subscriptions, feedVideos] = await Promise.all([
 			getSubscriptions(locals.session.accessToken).catch((err) => {
 				console.error('[HOME PAGE] getSubscriptions FAILED:', err);
 				return emptyChannels;
 			}),
-			getTrending().catch((err) => {
-				console.error('[HOME PAGE] getTrending FAILED (auth path):', err);
-				return emptyVideos;
+			getSubscriptionFeed(locals.session.accessToken).catch((err) => {
+				console.error('[HOME PAGE] getSubscriptionFeed FAILED:', err);
+				return [] as VideoItem[];
 			})
 		]);
 
 		console.log(
 			'[HOME PAGE] Auth results — subscriptions:',
 			subscriptions.items.length,
-			'trending:',
-			trending.items.length
+			'feed videos:',
+			feedVideos.length
 		);
-		const filteredTrending = await filterOutShorts(trending.items);
+		const cleanFeed = filterOutBrokenVideos(feedVideos);
+		const filteredFeed = await filterOutShorts(cleanFeed);
 		console.log(
 			'[HOME PAGE] After shorts filter:',
-			filteredTrending.length,
+			filteredFeed.length,
 			'videos remain (from',
-			trending.items.length,
+			feedVideos.length,
 			')'
 		);
 
 		return {
 			authenticated: true as const,
 			subscriptions: subscriptions.items,
-			trending: filteredTrending,
-			nextPageToken: trending.pageInfo.nextPageToken
+			feed: filteredFeed
 		};
 	}
 
@@ -80,7 +87,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 		'categories:',
 		categories.length
 	);
-	const filteredTrending = await filterOutShorts(trending.items);
+	const cleanTrending = filterOutBrokenVideos(trending.items);
+	const filteredTrending = await filterOutShorts(cleanTrending);
 	console.log(
 		'[HOME PAGE] After shorts filter:',
 		filteredTrending.length,

@@ -1,13 +1,10 @@
 <!--
 	@component Search Results Page
 
-	Displays search results with type filter chips (Videos / Channels / Playlists).
-	Each result type renders through its own VirtualFeed with a type-appropriate
-	card component, since the layout and row heights differ between videos,
-	channels, and playlists.
-
-	Switching the type filter triggers a client-side navigation (via `goto`) that
-	re-runs the server load with the new `type` param, preserving the search query.
+	Displays search results with multi-select type filter chips (Videos / Channels / Playlists).
+	By default all types are selected. Toggling chips filters the results.
+	Results from all selected types are rendered together in a unified list,
+	each using its appropriate card component.
 -->
 <script lang="ts">
 	import VideoCard from '$lib/components/VideoCard.svelte';
@@ -16,24 +13,21 @@
 	import VirtualFeed from '$lib/components/VirtualFeed.svelte';
 	import FilterChips from '$lib/components/FilterChips.svelte';
 	import { goto } from '$app/navigation';
-	import type { VideoItem, ChannelItem, PlaylistItem } from '$lib/types';
 	import type { PageData } from './$types';
+	import type { SearchResult } from './+page.server';
 
 	let { data }: { data: PageData } = $props();
 
-	// Static filter chip definitions; the selected state comes from `data.type`
 	const typeFilters = [
 		{ label: 'Videos', value: 'video' },
 		{ label: 'Channels', value: 'channel' },
 		{ label: 'Playlists', value: 'playlist' }
 	];
 
-	/* Navigate to the same search page with a different type filter.
-	 * This triggers a full server re-load so results come from the
-	 * correct YouTube search endpoint. */
-	function handleTypeChange(type: string) {
+	function handleTypeChange(types: string | string[]) {
+		const typesArray = Array.isArray(types) ? types : [types];
 		const q = data.query ? `q=${encodeURIComponent(data.query)}&` : '';
-		goto(`/search?${q}type=${encodeURIComponent(type)}`);
+		goto(`/search?${q}types=${encodeURIComponent(typesArray.join(','))}`);
 	}
 </script>
 
@@ -42,62 +36,35 @@
 </svelte:head>
 
 <div class="mx-auto max-w-screen-xl px-4 py-4">
-	<FilterChips filters={typeFilters} selected={data.type} onChange={handleTypeChange} />
+	<FilterChips
+		filters={typeFilters}
+		selected={data.types}
+		onChange={handleTypeChange}
+		multiSelect={true}
+	/>
 
-	<!-- Empty state: prompt if no query, "no results" if query returned nothing -->
 	{#if !data.query}
 		<p class="text-yt-text-secondary mt-8 text-center">Search for videos, channels, or playlists</p>
 	{:else if data.results.length === 0}
 		<p class="text-yt-text-secondary mt-8 text-center">No results found for "{data.query}"</p>
 	{:else}
-		<!-- Each result type uses its own VirtualFeed with a matching card component -->
 		<div class="mt-4">
-			{#if data.type === 'channel'}
-				<VirtualFeed
-					items={data.results as ChannelItem[]}
-					columns={1}
-					estimateRowHeight={80}
-					gap={16}
-				>
-					{#snippet children(item)}
-						<ChannelCard channel={item} />
-					{/snippet}
-				</VirtualFeed>
-			{:else if data.type === 'playlist'}
-				<VirtualFeed
-					items={data.results as PlaylistItem[]}
-					columns={1}
-					estimateRowHeight={120}
-					gap={16}
-				>
-					{#snippet children(item)}
-						<PlaylistCard playlist={item} />
-					{/snippet}
-				</VirtualFeed>
-			{:else}
-				<VirtualFeed
-					items={data.results as VideoItem[]}
-					columns={1}
-					estimateRowHeight={120}
-					gap={16}
-				>
-					{#snippet children(item)}
-						<VideoCard video={item} layout="horizontal" />
-					{/snippet}
-				</VirtualFeed>
-			{/if}
+			<VirtualFeed
+				items={data.results as SearchResult[]}
+				columns={1}
+				estimateRowHeight={100}
+				gap={8}
+			>
+				{#snippet children(result)}
+					{#if result.type === 'video'}
+						<VideoCard video={result.item} layout="horizontal" />
+					{:else if result.type === 'channel'}
+						<ChannelCard channel={result.item} />
+					{:else if result.type === 'playlist'}
+						<PlaylistCard playlist={result.item} />
+					{/if}
+				{/snippet}
+			</VirtualFeed>
 		</div>
-
-		<!-- Server-side pagination: the "Load more" link adds the nextPageToken to the URL -->
-		{#if data.nextPageToken}
-			<div class="mt-6 flex justify-center">
-				<a
-					href="/search?q={data.query}&type={data.type}&pageToken={data.nextPageToken}"
-					class="bg-yt-surface hover:bg-yt-surface-hover rounded-full px-6 py-2 text-sm"
-				>
-					Load more
-				</a>
-			</div>
-		{/if}
 	{/if}
 </div>

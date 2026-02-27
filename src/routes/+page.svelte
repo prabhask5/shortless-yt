@@ -3,7 +3,7 @@
 
 	Renders the main landing page with two distinct layouts depending on
 	whether the user is authenticated:
-	- Authenticated: shows a horizontal subscription channel bar + trending videos.
+	- Authenticated: shows subscriptions bar + recent videos from subscribed channels.
 	- Anonymous: shows category filter chips + trending videos.
 
 	The video grid uses VirtualFeed for efficient rendering of large lists,
@@ -82,9 +82,26 @@
 			</section>
 		{/if}
 
-		<!-- Trending video grid: uses VirtualFeed for windowed rendering, falls back to skeletons -->
+		<!-- Video grid: subscription feed for auth users, trending for anon users -->
 		<section>
-			{#if data.trending && data.trending.length > 0}
+			{#if data.authenticated && 'feed' in data}
+				{#if data.feed && data.feed.length > 0}
+					<VirtualFeed
+						items={data.feed}
+						{columns}
+						estimateRowHeight={columns === 1 ? 300 : 280}
+						gap={16}
+					>
+						{#snippet children(video)}
+							<VideoCard {video} />
+						{/snippet}
+					</VirtualFeed>
+				{:else}
+					<p class="text-yt-text-secondary py-8 text-center">
+						No recent videos from your subscriptions.
+					</p>
+				{/if}
+			{:else if 'trending' in data && data.trending && data.trending.length > 0}
 				<VirtualFeed
 					items={data.trending}
 					{columns}

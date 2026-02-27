@@ -12,7 +12,7 @@
 import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { getLikedVideos } from '$lib/server/youtube';
-import { filterOutShorts } from '$lib/server/shorts';
+import { filterOutShorts, filterOutBrokenVideos } from '$lib/server/shorts';
 
 export const load: PageServerLoad = async ({ locals }) => {
 	console.log('[LIKED PAGE] Loading liked videos, authenticated:', !!locals.session);
@@ -32,7 +32,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 	}
 
 	console.log('[LIKED PAGE] Liked videos fetched:', result.items.length);
-	const filtered = await filterOutShorts(result.items);
+	const clean = filterOutBrokenVideos(result.items);
+	const filtered = await filterOutShorts(clean);
 	console.log('[LIKED PAGE] After shorts filter:', filtered.length, 'videos remain');
 
 	return {

@@ -957,6 +957,97 @@ export async function getUserPlaylists(
 }
 
 /**
+ * Fetch a feed of recent videos from the authenticated user's subscriptions.
+ *
+ * YouTube doesn't provide a direct subscription feed endpoint, so this builds
+ * one manually:
+ * 1. Fetch subscriptions to get channel IDs.
+ * 2. Batch-fetch channels to get each channel's uploads playlist ID.
+ * 3. Fetch the most recent uploads from each channel's playlist.
+ * 4. Merge all videos, sort by publish date (newest first), and return.
+ *
+ * To conserve API quota, limits to the first 15 subscribed channels.
+ *
+ * @param accessToken - The user's OAuth2 access token.
+ * @returns Array of recent videos from subscriptions, sorted newest first.
+ */
+export async function getSubscriptionFeed(accessToken: string): Promise<VideoItem[]> {
+	const cacheKey = `user:subfeed:${accessToken.slice(-8)}`;
+	const cached = userCache.get<VideoItem[]>(cacheKey);
+	if (cached) {
+		console.log(`[YOUTUBE] getSubscriptionFeed CACHE HIT, ${cached.length} videos`);
+		return cached;
+	}
+	console.log('[YOUTUBE] getSubscriptionFeed CACHE MISS, building feed...');
+
+	// Step 1: Get subscriptions
+	const subs = await getSubscriptions(accessToken);
+	const channelIds = subs.items.map((ch) => ch.id).filter(Boolean);
+	console.log(`[YOUTUBE] getSubscriptionFeed — ${channelIds.length} subscribed channels`);
+
+	if (channelIds.length === 0) return [];
+
+	// Limit to 15 channels to conserve quota
+	const limitedIds = channelIds.slice(0, 15);
+
+	// Step 2: Batch-fetch channels to get uploads playlist IDs
+	const channelData = (await youtubeApiFetch('channels', {
+		part: 'contentDetails',
+		id: limitedIds.join(','),
+		maxResults: '50'
+	})) as Record<string, unknown>;
+
+	const channelItems = (channelData.items as Record<string, unknown>[]) ?? [];
+	const uploadsPlaylistIds: string[] = [];
+
+	for (const ch of channelItems) {
+		const contentDetails = ch.contentDetails as Record<string, unknown> | undefined;
+		const relatedPlaylists = contentDetails?.relatedPlaylists as Record<string, string> | undefined;
+		const uploadsId = relatedPlaylists?.uploads;
+		if (uploadsId) uploadsPlaylistIds.push(uploadsId);
+	}
+
+	console.log(
+		`[YOUTUBE] getSubscriptionFeed — found ${uploadsPlaylistIds.length} uploads playlists`
+	);
+
+	// Step 3: Fetch 5 recent videos from each channel's uploads playlist (in parallel)
+	const playlistFetches = uploadsPlaylistIds.map(async (playlistId) => {
+		try {
+			const data = (await youtubeApiFetch('playlistItems', {
+				part: 'snippet',
+				playlistId,
+				maxResults: '5'
+			})) as Record<string, unknown>;
+
+			const items = (data.items as Record<string, unknown>[]) ?? [];
+			return items
+				.map((i) => {
+					const snippet = i.snippet as Record<string, unknown> | undefined;
+					const resourceId = snippet?.resourceId as Record<string, string> | undefined;
+					return resourceId?.videoId ?? '';
+				})
+				.filter(Boolean);
+		} catch (err) {
+			console.warn(`[YOUTUBE] getSubscriptionFeed — failed to fetch playlist ${playlistId}:`, err);
+			return [];
+		}
+	});
+
+	const allVideoIdArrays = await Promise.all(playlistFetches);
+	const allVideoIds = allVideoIdArrays.flat();
+	console.log(`[YOUTUBE] getSubscriptionFeed — collected ${allVideoIds.length} video IDs total`);
+
+	// Step 4: Fetch full video details and sort by date
+	const videos = allVideoIds.length > 0 ? await getVideoDetails(allVideoIds) : [];
+	videos.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+
+	console.log(`[YOUTUBE] getSubscriptionFeed — ${videos.length} videos after details fetch`);
+	userCache.set(cacheKey, videos, FIVE_MINUTES);
+	return videos;
+}
+
+/**
  * Fetch the authenticated user's own YouTube channel profile (avatar, title).
  *
  * Uses the `channels` endpoint with `mine=true` to get the channel belonging

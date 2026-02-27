@@ -13,8 +13,8 @@
 	 *   narrow mobile header alongside the logo and action buttons.
 	 *
 	 * The user menu is a simple dropdown that appears on avatar click, showing the
-	 * channel name and a sign-out link. When no user is signed in, a "Sign in" button
-	 * links to the OAuth flow at /api/auth/signin.
+	 * channel name, liked videos link, and a sign-out link. When no user is signed in,
+	 * a "Sign in" button links to the OAuth flow at /api/auth/login.
 	 */
 	import SearchBar from './SearchBar.svelte';
 	import DarkModeToggle from './DarkModeToggle.svelte';
@@ -125,6 +125,12 @@
 							<div class="border-yt-border border-b px-4 py-2">
 								<p class="text-yt-text text-sm font-medium">{user.channelTitle}</p>
 							</div>
+							<a
+								href="/liked"
+								class="text-yt-text hover:bg-yt-surface-hover block px-4 py-2 text-sm"
+							>
+								Liked videos
+							</a>
 							<a
 								href="/api/auth/logout"
 								data-sveltekit-reload

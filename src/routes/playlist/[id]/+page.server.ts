@@ -12,7 +12,7 @@
 import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { getPlaylist, getPlaylistVideos } from '$lib/server/youtube';
-import { filterOutShorts } from '$lib/server/shorts';
+import { filterOutShorts, filterOutBrokenVideos } from '$lib/server/shorts';
 
 export const load: PageServerLoad = async ({ params }) => {
 	const playlistId = params.id;
@@ -44,7 +44,8 @@ export const load: PageServerLoad = async ({ params }) => {
 		'videos fetched:',
 		videosResult.items.length
 	);
-	const filteredVideos = await filterOutShorts(videosResult.items);
+	const cleanVideos = filterOutBrokenVideos(videosResult.items);
+	const filteredVideos = await filterOutShorts(cleanVideos);
 	console.log('[PLAYLIST PAGE] After shorts filter:', filteredVideos.length, 'videos remain');
 
 	return {

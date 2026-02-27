@@ -3,40 +3,56 @@
 	 * @fileoverview FilterChips component for horizontally scrollable filter/tag selection.
 	 * @component
 	 *
-	 * Renders a row of pill-shaped filter buttons that scroll horizontally when they
-	 * overflow the container width. The selected chip is visually inverted (text color
-	 * swaps with background color) to indicate the active filter.
+	 * Supports both single-select and multi-select modes.
+	 * - Multi-select: clicking toggles chips on/off. At least one must remain selected.
+	 * - Single-select: clicking selects one chip exclusively.
 	 *
-	 * Used by CategoryChips (which wraps this component) and potentially other filter UIs.
-	 * The scrollbar is hidden across all browsers using a combination of CSS tricks:
-	 * - ::-webkit-scrollbar { display: none } for Chrome/Safari/Edge
-	 * - -ms-overflow-style: none for IE/legacy Edge
-	 * - scrollbar-width: none for Firefox
+	 * The selected chip(s) are visually inverted (text color swaps with background color).
+	 * The scrollbar is hidden across all browsers.
 	 */
 
 	let {
-		/** Array of filter options, each with a display label and a programmatic value */
 		filters,
-		/** The currently selected filter value (used to highlight the active chip) */
 		selected,
-		/** Callback fired when a chip is clicked, receives the filter's value */
-		onChange
+		onChange,
+		multiSelect = false
 	}: {
 		filters: { label: string; value: string }[];
-		selected: string;
-		onChange: (value: string) => void;
+		selected: string | string[];
+		onChange: (value: string | string[]) => void;
+		multiSelect?: boolean;
 	} = $props();
+
+	function isSelected(value: string): boolean {
+		if (Array.isArray(selected)) {
+			return selected.includes(value);
+		}
+		return selected === value;
+	}
+
+	function handleClick(value: string) {
+		if (multiSelect && Array.isArray(selected)) {
+			if (selected.includes(value)) {
+				// Don't deselect the last chip
+				if (selected.length > 1) {
+					onChange(selected.filter((v) => v !== value));
+				}
+			} else {
+				onChange([...selected, value]);
+			}
+		} else {
+			onChange(value);
+		}
+	}
 </script>
 
 <!-- Horizontally scrollable chip container with hidden scrollbar -->
 <div class="scrollbar-hide flex gap-2 overflow-x-auto py-2">
 	{#each filters as filter (filter.value)}
-		<!-- Active chip: inverted colors (bg-yt-text text-yt-bg).
-		     Inactive chip: surface background with hover highlight. -->
 		<button
-			onclick={() => onChange(filter.value)}
+			onclick={() => handleClick(filter.value)}
 			class="shrink-0 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors
-				{selected === filter.value
+				{isSelected(filter.value)
 				? 'bg-yt-text text-yt-bg'
 				: 'bg-yt-surface text-yt-text hover:bg-yt-surface-hover'}"
 		>
@@ -45,8 +61,6 @@
 	{/each}
 </div>
 
-<!-- Cross-browser scrollbar hiding: WebKit pseudo-element for Chrome/Safari,
-     -ms-overflow-style for IE, scrollbar-width for Firefox -->
 <style>
 	.scrollbar-hide::-webkit-scrollbar {
 		display: none;

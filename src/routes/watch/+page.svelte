@@ -3,7 +3,7 @@
 
 	Renders the video player, details, chapter markers, and comment section
 	for a single video. Uses a two-column grid on desktop (player+details on
-	the left, space for related content on the right).
+	the left, related videos on the right).
 
 	State management notes:
 	- `playerStartTime` is initialized from server data (`data.startTime`) and
@@ -19,6 +19,7 @@
 	import VideoDetails from '$lib/components/VideoDetails.svelte';
 	import VideoChapters from '$lib/components/VideoChapters.svelte';
 	import CommentSection from '$lib/components/CommentSection.svelte';
+	import VideoCard from '$lib/components/VideoCard.svelte';
 	import type { CommentItem } from '$lib/types';
 	import type { PageData } from './$types';
 
@@ -72,7 +73,7 @@
 	<meta name="description" content={data.video.title} />
 </svelte:head>
 
-<!-- Two-column layout: video content (2/3) + sidebar space (1/3) on large screens -->
+<!-- Two-column layout: video content (2/3) + related videos sidebar (1/3) on large screens -->
 <div class="mx-auto max-w-screen-xl px-4 py-4">
 	<div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
 		<div class="lg:col-span-2">
@@ -101,5 +102,15 @@
 				hasMore={!!nextPageToken}
 			/>
 		</div>
+
+		<!-- Related videos sidebar -->
+		{#if data.relatedVideos && data.relatedVideos.length > 0}
+			<aside class="flex flex-col gap-3">
+				<h2 class="text-yt-text text-base font-medium">Related videos</h2>
+				{#each data.relatedVideos.slice(0, 15) as video (video.id)}
+					<VideoCard {video} layout="horizontal" />
+				{/each}
+			</aside>
+		{/if}
 	</div>
 </div>

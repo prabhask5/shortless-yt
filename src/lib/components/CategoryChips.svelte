@@ -28,4 +28,4 @@
 	let filters = $derived(categories.map((c) => ({ label: c.title, value: c.id })));
 </script>
 
-<FilterChips {filters} {selected} {onChange} />
+<FilterChips {filters} {selected} onChange={onChange as (value: string | string[]) => void} />
