@@ -53,6 +53,75 @@ const ONE_DAY = 24 * 60 * 60 * 1000;
 // ===================================================================
 
 /**
+ * Custom error class for YouTube API quota exhaustion.
+ * When thrown, page loads can catch this and show a user-friendly quota message.
+ */
+export class QuotaExhaustedError extends Error {
+	/** Milliseconds until the quota resets (midnight Pacific Time). */
+	resetInMs: number;
+	/** Human-readable reset time string. */
+	resetAt: string;
+
+	constructor() {
+		const { resetInMs, resetAt } = getQuotaResetInfo();
+		super(`YouTube API daily quota exceeded. Resets at ${resetAt}.`);
+		this.name = 'QuotaExhaustedError';
+		this.resetInMs = resetInMs;
+		this.resetAt = resetAt;
+	}
+}
+
+/**
+ * Calculate time until the YouTube API quota resets.
+ * YouTube quota resets at midnight Pacific Time (America/Los_Angeles).
+ */
+function getQuotaResetInfo(): { resetInMs: number; resetAt: string } {
+	const now = new Date();
+	/* Build "next midnight PT" by formatting today in PT, incrementing the day */
+	const ptFormatter = new Intl.DateTimeFormat('en-US', {
+		timeZone: 'America/Los_Angeles',
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
+		hour: '2-digit',
+		minute: '2-digit',
+		hour12: false
+	});
+	const parts = ptFormatter.formatToParts(now);
+	const ptParts: Record<string, string> = {};
+	for (const p of parts) {
+		if (p.type !== 'literal') ptParts[p.type] = p.value;
+	}
+	/* Next midnight PT = start of next day in PT */
+	const tomorrowPT = new Date(`${ptParts.year}-${ptParts.month}-${ptParts.day}T00:00:00-08:00`);
+	tomorrowPT.setDate(tomorrowPT.getDate() + 1);
+	/* Adjust for PST/PDT: recalculate using the offset at that time */
+	const resetMs = tomorrowPT.getTime() - now.getTime();
+	const hours = Math.floor(resetMs / (1000 * 60 * 60));
+	const minutes = Math.ceil((resetMs % (1000 * 60 * 60)) / (1000 * 60));
+	const resetAt = `${hours}h ${minutes}m from now`;
+
+	return { resetInMs: resetMs > 0 ? resetMs : 0, resetAt };
+}
+
+/**
+ * Global flag: once we detect a quota exhaustion (403 quotaExceeded),
+ * all subsequent API calls fail fast until the reset time passes.
+ * This prevents wasting time on requests that will definitely fail.
+ */
+let quotaExhaustedUntil = 0;
+
+/** Check if the quota is currently known to be exhausted. */
+export function isQuotaExhausted(): boolean {
+	if (quotaExhaustedUntil === 0) return false;
+	if (Date.now() >= quotaExhaustedUntil) {
+		quotaExhaustedUntil = 0;
+		return false;
+	}
+	return true;
+}
+
+/**
  * Low-level fetch wrapper for the YouTube Data API v3.
  *
  * Handles API key injection for public requests and Bearer token injection
@@ -62,6 +131,7 @@ const ONE_DAY = 24 * 60 * 60 * 1000;
  * @param params      - Query parameters to append to the request URL.
  * @param accessToken - Optional OAuth2 access token for authenticated endpoints.
  * @returns The parsed JSON response body.
+ * @throws {QuotaExhaustedError} If the daily quota has been exceeded.
  * @throws {Error} If the API responds with a non-2xx status.
  */
 async function youtubeApiFetch(
@@ -69,6 +139,12 @@ async function youtubeApiFetch(
 	params: Record<string, string>,
 	accessToken?: string
 ): Promise<unknown> {
+	/* Fail fast if we already know the quota is exhausted */
+	if (isQuotaExhausted()) {
+		console.warn(`[YOUTUBE API] Skipping ${endpoint} — quota exhausted, failing fast`);
+		throw new QuotaExhaustedError();
+	}
+
 	const url = new URL(`${BASE_URL}/${endpoint}`);
 
 	if (!accessToken) {
@@ -97,6 +173,15 @@ async function youtubeApiFetch(
 	if (!res.ok) {
 		const errorBody = await res.text();
 		console.error(`[YOUTUBE API] ERROR ${res.status} on ${endpoint} (${elapsed}ms): ${errorBody}`);
+
+		/* Detect quota exhaustion and set the global flag */
+		if (res.status === 403 && errorBody.includes('quotaExceeded')) {
+			const { resetInMs } = getQuotaResetInfo();
+			quotaExhaustedUntil = Date.now() + resetInMs;
+			console.error(`[YOUTUBE API] QUOTA EXHAUSTED — all API calls will fail fast until reset`);
+			throw new QuotaExhaustedError();
+		}
+
 		throw new Error(`YouTube API error ${res.status} on ${endpoint}: ${errorBody}`);
 	}
 

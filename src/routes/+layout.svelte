@@ -11,6 +11,7 @@
 	  Header avatar menu) can reactively read auth status without prop drilling.
 	- Extracts the current search query `q` from the URL so the Header search
 	  bar stays in sync when navigating between pages.
+	- Shows a prominent banner when the YouTube API daily quota is exhausted.
 -->
 <script lang="ts">
 	import '../app.css';
@@ -23,6 +24,9 @@
 
 	// Keep the Header search bar in sync with the current `q` query param
 	let query = $derived($page.url.searchParams.get('q') ?? '');
+
+	// Quota exhaustion state from layout server load
+	let quotaExhausted = $derived(!!$page.data.quotaExhausted);
 
 	/* Sync server auth state to the client-side store on every navigation.
 	 * The layout server load provides `data.user` (or null), and this effect
@@ -44,6 +48,17 @@
 <!-- App shell: full-height flex column with sticky header and stretchy main -->
 <div class="bg-yt-bg text-yt-text flex min-h-screen flex-col">
 	<Header user={$authState.user} {query} />
+
+	{#if quotaExhausted}
+		<div class="border-b border-yellow-600/30 bg-yellow-900/30 px-4 py-3 text-center">
+			<p class="text-sm text-yellow-200">
+				<span class="mr-1 font-semibold">Daily limit reached.</span>
+				Shortless YouTube has used its YouTube API quota for today. Some data may be missing or stale.
+				The quota resets automatically at midnight Pacific Time.
+			</p>
+		</div>
+	{/if}
+
 	<main class="flex-1">
 		{@render children()}
 	</main>
