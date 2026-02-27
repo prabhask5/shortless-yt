@@ -12,12 +12,22 @@
 	import VideoCard from '$lib/components/VideoCard.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import type { CommentItem } from '$lib/types';
+	import { onMount } from 'svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 
 	// svelte-ignore state_referenced_locally
 	let playerStartTime = $state(data.startTime);
+
+	let theaterMode = $state(false);
+	onMount(() => {
+		theaterMode = localStorage.getItem('theaterMode') === 'true';
+	});
+	function toggleTheater() {
+		theaterMode = !theaterMode;
+		localStorage.setItem('theaterMode', String(theaterMode));
+	}
 
 	function handleSeek(seconds: number) {
 		playerStartTime = seconds;
@@ -62,11 +72,52 @@
 	<meta name="description" content={data.video.title} />
 </svelte:head>
 
-<div class="mx-auto max-w-screen-xl px-4 py-4">
+<div class="mx-auto px-4 py-4 {theaterMode ? 'max-w-full' : 'max-w-screen-xl'}">
 	<div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
-		<div class="lg:col-span-2">
+		<div class={theaterMode ? 'lg:col-span-3' : 'lg:col-span-2'}>
 			<!-- Video player renders immediately (blocking data) -->
 			<VideoPlayer videoId={data.video.id} startTime={playerStartTime} />
+
+			<!-- Theater mode toggle (desktop only) -->
+			<div class="mt-2 hidden justify-end lg:flex">
+				<button
+					onclick={toggleTheater}
+					class="bg-yt-surface text-yt-text flex h-9 w-9 items-center justify-center rounded-full transition-colors hover:brightness-125"
+					aria-label={theaterMode ? 'Exit theater mode' : 'Enter theater mode'}
+				>
+					{#if theaterMode}
+						<svg
+							class="h-5 w-5"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
+							<polyline points="4 14 10 14 10 20" />
+							<polyline points="20 10 14 10 14 4" />
+							<line x1="14" y1="10" x2="21" y2="3" />
+							<line x1="3" y1="21" x2="10" y2="14" />
+						</svg>
+					{:else}
+						<svg
+							class="h-5 w-5"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
+							<polyline points="15 3 21 3 21 9" />
+							<polyline points="9 21 3 21 3 15" />
+							<line x1="21" y1="3" x2="14" y2="10" />
+							<line x1="3" y1="21" x2="10" y2="14" />
+						</svg>
+					{/if}
+				</button>
+			</div>
 
 			<!-- Channel details + comments stream in -->
 			{#await data.streamed.sidebarData}
@@ -126,7 +177,7 @@
 
 		<!-- More from this channel sidebar -->
 		{#await data.streamed.sidebarData}
-			<aside class="flex flex-col gap-3">
+			<aside class="flex flex-col gap-3 {theaterMode ? 'lg:col-span-3' : ''}">
 				<div class="bg-yt-surface h-5 w-48 animate-pulse rounded"></div>
 				{#each Array(5) as _unused, i (i)}
 					<div class="flex gap-3">
@@ -141,7 +192,7 @@
 			</aside>
 		{:then sidebar}
 			{#if sidebar.relatedVideos && sidebar.relatedVideos.length > 0}
-				<aside class="flex flex-col gap-3">
+				<aside class="flex flex-col gap-3 {theaterMode ? 'lg:col-span-3' : ''}">
 					<h2 class="text-yt-text text-base font-medium">More from this channel</h2>
 					{#each sidebar.relatedVideos.slice(0, 15) as video (video.id)}
 						<VideoCard {video} layout="horizontal" />

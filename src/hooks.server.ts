@@ -1,8 +1,8 @@
 /**
- * @fileoverview SvelteKit server hook for session management, rate limiting, and security headers.
+ * @fileoverview SvelteKit server hook for session management and rate limiting.
  *
  * This hook runs on every incoming server request before any route handler or
- * load function executes. It handles three concerns:
+ * load function executes. It handles two concerns:
  *
  * **1. Session hydration:**
  * Reads and validates the encrypted session cookie, attaching the decoded
@@ -18,9 +18,8 @@
  * instance and it blocks the most common abuse pattern (scripted rapid requests).
  *
  * **3. Content Security Policy (CSP):**
- * Sets CSP headers on page responses (not API responses) to restrict resource
- * loading. This mitigates XSS impact by preventing unauthorized script execution
- * and data exfiltration even if a vulnerability is introduced in the future.
+ * Handled natively by SvelteKit via `kit.csp.directives` in `svelte.config.js`,
+ * using nonce-based script-src instead of unsafe-inline.
  */
 
 import type { Handle } from '@sveltejs/kit';
@@ -78,17 +77,10 @@ const rateLimitMap = new Map<string, RateLimitEntry>();
  */
 setInterval(() => {
 	const now = Date.now();
-	let evicted = 0;
 	for (const [ip, entry] of rateLimitMap) {
 		if (now - entry.windowStart > RATE_LIMIT_WINDOW_MS * 2) {
 			rateLimitMap.delete(ip);
-			evicted++;
 		}
-	}
-	if (evicted > 0) {
-		console.log(
-			`[RATE LIMIT] Cleanup evicted ${evicted} stale entries, ${rateLimitMap.size} remaining`
-		);
 	}
 }, 2 * 60_000);
 
@@ -118,38 +110,6 @@ function isRateLimited(ip: string): boolean {
 }
 
 // ===================================================================
-// Content Security Policy
-// ===================================================================
-
-/**
- * CSP directives for page responses.
- *
- * - `default-src 'self'`: only load resources from our own origin by default.
- * - `script-src 'self' 'unsafe-inline'`: allow our own scripts and SvelteKit's
- *   inline hydration scripts. `'unsafe-inline'` is needed because SvelteKit
- *   injects inline `<script>` tags for data hydration.
- * - `style-src 'self' 'unsafe-inline'`: Tailwind generates stylesheet files,
- *   but Svelte may inject inline styles for transitions/animations.
- * - `img-src`: allow images from our origin plus YouTube's CDN domains (video
- *   thumbnails, channel avatars, comment author avatars).
- * - `frame-src`: only allow YouTube embeds (the video player iframe).
- * - `connect-src 'self'`: restrict fetch/XHR to our own origin (all YouTube
- *   API calls are proxied through our server endpoints).
- * - `font-src 'self'`: only load fonts from our own origin.
- * - `worker-src 'self'`: allow the PWA service worker.
- */
-const CSP_DIRECTIVES = [
-	"default-src 'self'",
-	"script-src 'self' 'unsafe-inline'",
-	"style-src 'self' 'unsafe-inline'",
-	"img-src 'self' https://*.ytimg.com https://*.ggpht.com https://*.googleusercontent.com data:",
-	'frame-src https://www.youtube.com',
-	"connect-src 'self'",
-	"font-src 'self'",
-	"worker-src 'self'"
-].join('; ');
-
-// ===================================================================
 // Main hook
 // ===================================================================
 
@@ -157,15 +117,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 	const cookie = event.cookies.get(SESSION_COOKIE_NAME);
 	const path = event.url.pathname;
 
-	console.log(
-		`[HOOKS] Incoming request: ${event.request.method} ${path}, cookie present: ${!!cookie}`
-	);
-
 	/* ── Rate limiting for API endpoints ────────────────────────────────
-	 * Only applies to /api/ routes (comments pagination, autocomplete proxy).
-	 * Auth endpoints (/api/auth/*) are excluded because they are user-initiated
-	 * one-shot actions, not repeatable data queries. */
-	if (path.startsWith('/api/') && !path.startsWith('/api/auth/')) {
+	 * Applies to all /api/ routes including auth endpoints. */
+	if (path.startsWith('/api/')) {
 		const ip = event.getClientAddress();
 		if (isRateLimited(ip)) {
 			console.warn(
@@ -191,13 +145,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 		if (session) {
 			const isExpired = Date.now() > session.expiresAt;
-			console.log(
-				`[HOOKS] Session valid, accessToken ends: ...${session.accessToken.slice(-6)}, expired: ${isExpired}, expiresAt: ${new Date(session.expiresAt).toISOString()}`
-			);
 
 			if (isExpired && session.refreshToken) {
 				try {
-					console.log('[HOOKS] Access token expired, refreshing...');
 					const refreshed = await refreshAccessToken(session.refreshToken);
 					session = {
 						...session,
@@ -212,9 +162,6 @@ export const handle: Handle = async ({ event, resolve }) => {
 						sameSite: 'lax',
 						maxAge: 60 * 60 * 24 * 30 // 30 days
 					});
-					console.log(
-						`[HOOKS] Token refreshed successfully, new token ends: ...${session.accessToken.slice(-6)}, expiresAt: ${new Date(session.expiresAt).toISOString()}`
-					);
 				} catch (err) {
 					console.error('[HOOKS] Token refresh FAILED, clearing session:', err);
 					event.locals.session = null;
@@ -230,25 +177,12 @@ export const handle: Handle = async ({ event, resolve }) => {
 				};
 			}
 		} else {
-			console.warn(
-				`[HOOKS] Session cookie INVALID (decryption failed or structural validation failed) — deleting cookie`
-			);
 			event.locals.session = null;
 			event.cookies.delete(SESSION_COOKIE_NAME, { path: '/' });
 		}
 	} else {
-		console.log(`[HOOKS] No session cookie — unauthenticated request`);
 		event.locals.session = null;
 	}
 
-	const response = await resolve(event);
-
-	/* ── CSP headers ────────────────────────────────────────────────────
-	 * Only set on page responses (HTML), not API endpoints (JSON).
-	 * API responses don't render in a browser context, so CSP is irrelevant. */
-	if (!path.startsWith('/api/')) {
-		response.headers.set('Content-Security-Policy', CSP_DIRECTIVES);
-	}
-
-	return response;
+	return await resolve(event);
 };

@@ -25,9 +25,6 @@ const emptyChannels: PaginatedResult<ChannelItem> = {
 };
 
 async function fetchAuthData(accessToken: string) {
-	console.log(
-		'[HOME PAGE] Authenticated path — fetching subscriptions + subscription feed in parallel'
-	);
 	const [subscriptions, feedResult] = await Promise.all([
 		getSubscriptions(accessToken).catch((err) => {
 			console.error('[HOME PAGE] getSubscriptions FAILED:', err);
@@ -39,21 +36,8 @@ async function fetchAuthData(accessToken: string) {
 		})
 	]);
 
-	console.log(
-		'[HOME PAGE] Auth results — subscriptions:',
-		subscriptions.items.length,
-		'feed videos:',
-		feedResult.items.length
-	);
 	const cleanFeed = filterOutBrokenVideos(feedResult.items);
 	const filteredFeed = await filterOutShorts(cleanFeed);
-	console.log(
-		'[HOME PAGE] After shorts filter:',
-		filteredFeed.length,
-		'videos remain (from',
-		feedResult.items.length,
-		')'
-	);
 
 	return {
 		subscriptions: subscriptions.items,
@@ -63,7 +47,6 @@ async function fetchAuthData(accessToken: string) {
 }
 
 async function fetchAnonData(categoryId?: string) {
-	console.log('[HOME PAGE] Anonymous path — fetching trending + categories in parallel');
 	const emptyVideos: PaginatedResult<VideoItem> = {
 		items: [],
 		pageInfo: { totalResults: 0 }
@@ -79,21 +62,8 @@ async function fetchAnonData(categoryId?: string) {
 		})
 	]);
 
-	console.log(
-		'[HOME PAGE] Anon results — trending:',
-		trending.items.length,
-		'categories:',
-		categories.length
-	);
 	const cleanTrending = filterOutBrokenVideos(trending.items);
 	const filteredTrending = await filterOutShorts(cleanTrending);
-	console.log(
-		'[HOME PAGE] After shorts filter:',
-		filteredTrending.length,
-		'videos remain (from',
-		trending.items.length,
-		')'
-	);
 
 	return {
 		trending: filteredTrending,
@@ -104,12 +74,6 @@ async function fetchAnonData(categoryId?: string) {
 
 export const load: PageServerLoad = async ({ locals, url }) => {
 	const categoryId = url.searchParams.get('category') || undefined;
-	console.log(
-		'[HOME PAGE] Loading home page, authenticated:',
-		!!locals.session,
-		'category:',
-		categoryId ?? 'all'
-	);
 
 	if (locals.session) {
 		return {

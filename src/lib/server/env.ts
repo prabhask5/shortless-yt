@@ -12,6 +12,9 @@
 import { env } from '$env/dynamic/private';
 import { env as publicEnv } from '$env/dynamic/public';
 
+/** Memoization cache so each env var is read at most once per process. */
+const envCache = new Map<string, string>();
+
 /**
  * Retrieve a required environment variable by key.
  *
@@ -20,21 +23,22 @@ import { env as publicEnv } from '$env/dynamic/public';
  * - `$env/dynamic/public` for variables WITH the `PUBLIC_` prefix
  * This function checks both so callers don't need to know which namespace a var lives in.
  *
+ * Results are memoized per key per process lifetime.
+ *
  * @param key - The environment variable name to look up.
  * @returns The string value of the environment variable.
  * @throws {Error} If the variable is missing or empty.
  */
 export function getEnv(key: string): string {
+	const cached = envCache.get(key);
+	if (cached) return cached;
+
 	const value = key.startsWith('PUBLIC_') ? publicEnv[key as `PUBLIC_${string}`] : env[key];
 	if (!value) {
-		console.error(
-			`[ENV] MISSING environment variable: ${key} (checked ${key.startsWith('PUBLIC_') ? 'public' : 'private'} namespace) — this will cause a crash. Check your .env file and Vercel environment settings.`
-		);
+		console.error(`[ENV] MISSING environment variable: ${key}`);
 		throw new Error(`Missing environment variable: ${key}`);
 	}
-	console.log(
-		`[ENV] Loaded ${key} = ${key.includes('SECRET') || key.includes('KEY') ? '***MASKED***' : value}`
-	);
+	envCache.set(key, value);
 	return value;
 }
 

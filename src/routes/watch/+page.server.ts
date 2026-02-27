@@ -28,9 +28,6 @@ const emptyUploads: PaginatedResult<VideoItem> = {
 };
 
 async function fetchSidebarData(videoId: string, channelId: string) {
-	console.log(
-		'[WATCH PAGE] Phase 2: Fetching channel details + channel uploads + comments in parallel'
-	);
 	const [channels, comments, channelUploads] = await Promise.all([
 		getChannelDetails([channelId]).catch((err) => {
 			console.error('[WATCH PAGE] getChannelDetails FAILED:', err);
@@ -40,7 +37,7 @@ async function fetchSidebarData(videoId: string, channelId: string) {
 			console.warn('[WATCH PAGE] getComments FAILED (may be disabled):', err);
 			return emptyComments();
 		}),
-		getChannelVideos(channelId).catch((err) => {
+		getChannelVideos(channelId, undefined, 15).catch((err) => {
 			console.warn('[WATCH PAGE] Channel uploads FAILED:', err);
 			return emptyUploads;
 		})
@@ -49,15 +46,6 @@ async function fetchSidebarData(videoId: string, channelId: string) {
 	const channel = channels[0] ?? null;
 	const relatedClean = filterOutBrokenVideos(channelUploads.items.filter((v) => v.id !== videoId));
 	const relatedFiltered = await filterOutShorts(relatedClean);
-
-	console.log(
-		'[WATCH PAGE] Phase 2 complete — channel:',
-		channel?.title ?? 'null',
-		'comments:',
-		comments.items.length,
-		'more from channel:',
-		relatedFiltered.length
-	);
 
 	return {
 		channel,
@@ -69,16 +57,13 @@ async function fetchSidebarData(videoId: string, channelId: string) {
 
 export const load: PageServerLoad = async ({ url }) => {
 	const videoId = url.searchParams.get('v');
-	console.log('[WATCH PAGE] Loading watch page, videoId:', videoId);
 
 	if (!videoId) {
-		console.error('[WATCH PAGE] Missing video ID in URL');
 		throw error(400, 'Missing video ID');
 	}
 
 	const startTime = url.searchParams.get('t');
 
-	console.log('[WATCH PAGE] Phase 1: Fetching video details for', videoId);
 	let videos;
 	try {
 		videos = await getVideoDetails([videoId]);
@@ -88,12 +73,10 @@ export const load: PageServerLoad = async ({ url }) => {
 	}
 
 	if (videos.length === 0) {
-		console.warn('[WATCH PAGE] Video not found:', videoId);
 		throw error(404, 'Video not found');
 	}
 
 	const video = videos[0];
-	console.log('[WATCH PAGE] Phase 1 complete — video:', video.title, 'channel:', video.channelId);
 
 	return {
 		video,

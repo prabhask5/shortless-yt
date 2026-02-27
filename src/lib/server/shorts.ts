@@ -50,6 +50,9 @@ const SHORTS_CACHE_MAX_SIZE = 50_000;
  */
 const HEAD_PROBE_TIMEOUT_MS = 3_000;
 
+/** Maximum number of concurrent HEAD probes. */
+const HEAD_PROBE_CONCURRENCY = 6;
+
 /**
  * Permanent cache for shorts detection results (videoId -> isShort).
  *
@@ -78,9 +81,6 @@ function shortsCacheSet(videoId: string, value: boolean): void {
 			const key = iterator.next().value;
 			if (key !== undefined) shortsCache.delete(key);
 		}
-		console.log(
-			`[SHORTS] Cache evicted ${toDelete} oldest entries (FIFO), ${shortsCache.size} remaining`
-		);
 	}
 	shortsCache.set(videoId, value);
 }
@@ -123,10 +123,7 @@ export function parseDurationSeconds(iso8601: string): number {
  */
 export async function isShort(videoId: string): Promise<boolean> {
 	const cached = shortsCache.get(videoId);
-	if (cached !== undefined) {
-		console.log(`[SHORTS] isShort CACHE HIT for ${videoId}: ${cached}`);
-		return cached;
-	}
+	if (cached !== undefined) return cached;
 
 	try {
 		const controller = new AbortController();
@@ -141,12 +138,9 @@ export async function isShort(videoId: string): Promise<boolean> {
 		clearTimeout(timeout);
 
 		const result = res.status === 200;
-		console.log(
-			`[SHORTS] isShort HEAD probe for ${videoId}: status=${res.status}, isShort=${result}`
-		);
 		shortsCacheSet(videoId, result);
 		return result;
-	} catch (err) {
+	} catch {
 		/* Fail-safe: treat as Short on timeout/network error. The primary purpose
 		 * of this application is removing Shorts — it's better to temporarily hide
 		 * a regular short-duration video than to show a Short to the user.
@@ -154,11 +148,6 @@ export async function isShort(videoId: string): Promise<boolean> {
 		 * We do NOT cache this result so it will be retried on the next request.
 		 * If the video is actually a regular video, it will appear once the probe
 		 * succeeds. */
-		const isTimeout = err instanceof DOMException && err.name === 'AbortError';
-		console.warn(
-			`[SHORTS] isShort HEAD probe FAILED for ${videoId} (${isTimeout ? 'TIMEOUT' : 'NETWORK ERROR'}) — treating as Short (fail-safe, not cached):`,
-			err
-		);
 		return true;
 	}
 }
@@ -172,15 +161,18 @@ export async function isShort(videoId: string): Promise<boolean> {
  *    to be Shorts (YouTube max is 60s, with 180s as a safety margin) and are
  *    kept immediately without any network calls.
  *
- * 2. **HEAD probe:** Videos with `duration <= 180s` or no duration data are
- *    checked concurrently via {@link isShort}. All probes run in parallel via
- *    `Promise.all` to minimize total latency.
+ * 2. **Live stream skip:** Videos with `duration === 'P0D'` or duration that
+ *    parses to 0 seconds but have views are likely live streams — they are
+ *    kept without HEAD probes since live streams are never Shorts.
+ *
+ * 3. **HEAD probe:** Remaining videos with `duration <= 180s` or no duration
+ *    data are checked via {@link isShort}. Probes run in batches of
+ *    {@link HEAD_PROBE_CONCURRENCY} to avoid overwhelming the network.
  *
  * @param videos - Array of video items to filter.
  * @returns Array of videos with all detected Shorts removed.
  */
 export async function filterOutShorts(videos: VideoItem[]): Promise<VideoItem[]> {
-	console.log(`[SHORTS] filterOutShorts called with ${videos.length} videos`);
 	const toCheck: Array<{ video: VideoItem; index: number }> = [];
 
 	/* Build a per-video keep/skip decision array that preserves original order. */
@@ -192,35 +184,37 @@ export async function filterOutShorts(videos: VideoItem[]): Promise<VideoItem[]>
 
 		if (video.duration && durationSeconds > 180) {
 			/* Guaranteed not a Short — keep (already true). */
+		} else if (
+			durationSeconds === 0 &&
+			(video.duration === 'P0D' || video.duration === 'PT0S') &&
+			video.viewCount &&
+			video.viewCount !== '0'
+		) {
+			/* Live stream or unparseable duration with views — never a Short, keep. */
 		} else {
 			toCheck.push({ video, index: i });
 		}
 	}
 
-	console.log(
-		`[SHORTS] ${videos.length - toCheck.length} videos passed duration pre-filter (>180s), ${toCheck.length} need HEAD probe`
-	);
-
 	if (toCheck.length > 0) {
-		const checks = await Promise.all(toCheck.map(({ video }) => isShort(video.id)));
+		/* Process HEAD probes in batches to cap concurrency. */
+		const checks: boolean[] = new Array(toCheck.length);
+		for (let i = 0; i < toCheck.length; i += HEAD_PROBE_CONCURRENCY) {
+			const batch = toCheck.slice(i, i + HEAD_PROBE_CONCURRENCY);
+			const batchResults = await Promise.all(batch.map(({ video }) => isShort(video.id)));
+			for (let j = 0; j < batchResults.length; j++) {
+				checks[i + j] = batchResults[j];
+			}
+		}
 
-		let filtered = 0;
 		for (let i = 0; i < toCheck.length; i++) {
 			if (checks[i]) {
 				keep[toCheck[i].index] = false;
-				filtered++;
 			}
 		}
-		console.log(
-			`[SHORTS] HEAD probe results: ${filtered} shorts removed, ${toCheck.length - filtered} kept`
-		);
 	}
 
-	const results = videos.filter((_, i) => keep[i]);
-	console.log(
-		`[SHORTS] filterOutShorts final: ${results.length} videos remain from original ${videos.length}`
-	);
-	return results;
+	return videos.filter((_, i) => keep[i]);
 }
 
 /**
@@ -240,9 +234,7 @@ export async function filterOutShorts(videos: VideoItem[]): Promise<VideoItem[]>
  * @returns Array of videos with broken/deleted entries removed.
  */
 export function filterOutBrokenVideos(videos: VideoItem[]): VideoItem[] {
-	console.log(`[FILTER] filterOutBrokenVideos called with ${videos.length} videos`);
 	const results: VideoItem[] = [];
-	const removed: string[] = [];
 
 	for (const video of videos) {
 		const reasons: string[] = [];
@@ -270,21 +262,10 @@ export function filterOutBrokenVideos(videos: VideoItem[]): VideoItem[] {
 			reasons.push(`zero duration (${video.duration}) + zero views`);
 		}
 
-		if (reasons.length > 0) {
-			removed.push(`${video.id} (${reasons.join(', ')})`);
-		} else {
+		if (reasons.length === 0) {
 			results.push(video);
 		}
 	}
 
-	if (removed.length > 0) {
-		console.log(`[FILTER] Removed ${removed.length} broken videos:`);
-		for (const r of removed) {
-			console.log(`[FILTER]   - ${r}`);
-		}
-	}
-	console.log(
-		`[FILTER] filterOutBrokenVideos final: ${results.length} videos remain from original ${videos.length}`
-	);
 	return results;
 }

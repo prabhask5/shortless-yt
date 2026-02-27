@@ -61,12 +61,6 @@ export function getGoogleAuthUrl(state: string): string {
 	const clientId = GOOGLE_CLIENT_ID();
 	const appUrl = PUBLIC_APP_URL();
 	const redirectUri = `${appUrl}/api/auth/callback`;
-	console.log(
-		'[AUTH] Building Google OAuth URL, client_id:',
-		clientId.slice(0, 12) + '...',
-		'redirect_uri:',
-		redirectUri
-	);
 
 	const params = new URLSearchParams({
 		client_id: clientId,
@@ -78,9 +72,7 @@ export function getGoogleAuthUrl(state: string): string {
 		state
 	});
 
-	const url = `${GOOGLE_AUTH_URL}?${params.toString()}`;
-	console.log('[AUTH] Google OAuth URL built successfully');
-	return url;
+	return `${GOOGLE_AUTH_URL}?${params.toString()}`;
 }
 
 /**
@@ -94,7 +86,6 @@ export async function exchangeCode(
 	code: string
 ): Promise<{ access_token: string; refresh_token: string; expires_in: number }> {
 	const redirectUri = `${PUBLIC_APP_URL()}/api/auth/callback`;
-	console.log('[AUTH] Exchanging authorization code, redirect_uri:', redirectUri);
 
 	const res = await fetch(GOOGLE_TOKEN_URL, {
 		method: 'POST',
@@ -120,15 +111,6 @@ export async function exchangeCode(
 		expires_in: number;
 	};
 
-	console.log(
-		'[AUTH] Token exchange SUCCESS, has_access_token:',
-		!!data.access_token,
-		'has_refresh_token:',
-		!!data.refresh_token,
-		'expires_in:',
-		data.expires_in
-	);
-
 	return {
 		access_token: data.access_token,
 		refresh_token: data.refresh_token,
@@ -149,7 +131,6 @@ export async function exchangeCode(
 export async function refreshAccessToken(
 	refreshToken: string
 ): Promise<{ access_token: string; expires_in: number }> {
-	console.log('[AUTH] Refreshing access token...');
 	const res = await fetch(GOOGLE_TOKEN_URL, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -172,7 +153,6 @@ export async function refreshAccessToken(
 		expires_in: number;
 	};
 
-	console.log('[AUTH] Token refresh SUCCESS, expires_in:', data.expires_in);
 	return {
 		access_token: data.access_token,
 		expires_in: data.expires_in
@@ -205,13 +185,6 @@ function getEncryptionKey(): Buffer {
  * @returns A cookie-safe string in the format `iv.tag.ciphertext`.
  */
 export function encryptSession(session: UserSession): string {
-	console.log(
-		'[AUTH] Encrypting session (AES-256-GCM), has accessToken:',
-		!!session.accessToken,
-		'has refreshToken:',
-		!!session.refreshToken
-	);
-
 	const key = getEncryptionKey();
 	const iv = randomBytes(12);
 	const cipher = createCipheriv('aes-256-gcm', key, iv);
@@ -220,9 +193,7 @@ export function encryptSession(session: UserSession): string {
 	const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
 	const tag = cipher.getAuthTag();
 
-	const result = `${iv.toString('base64url')}.${tag.toString('base64url')}.${encrypted.toString('base64url')}`;
-	console.log('[AUTH] Session encrypted (AES-256-GCM), cookie length:', result.length, 'chars');
-	return result;
+	return `${iv.toString('base64url')}.${tag.toString('base64url')}.${encrypted.toString('base64url')}`;
 }
 
 /**
@@ -238,7 +209,6 @@ export function encryptSession(session: UserSession): string {
  */
 export function decryptSession(cookie: string): UserSession | null {
 	try {
-		console.log('[AUTH] Decrypting session cookie, length:', cookie.length);
 		const parts = cookie.split('.');
 
 		if (parts.length === 3) {
@@ -246,14 +216,11 @@ export function decryptSession(cookie: string): UserSession | null {
 		}
 
 		if (parts.length === 2) {
-			console.log('[AUTH] Detected legacy HMAC session format, attempting migration path...');
 			return decryptLegacyHmac(parts[0], parts[1]);
 		}
 
-		console.warn('[AUTH] Session cookie has unexpected format — part count:', parts.length);
 		return null;
-	} catch (err) {
-		console.error('[AUTH] Session decryption threw error:', err);
+	} catch {
 		return null;
 	}
 }
@@ -274,21 +241,9 @@ function decryptAesGcm(ivB64: string, tagB64: string, ciphertextB64: string): Us
 	const session = JSON.parse(decrypted.toString('utf8')) as UserSession;
 
 	if (!session.accessToken || !session.refreshToken || !session.expiresAt) {
-		console.warn(
-			'[AUTH] AES-GCM decrypted session missing required fields. accessToken:',
-			!!session.accessToken,
-			'refreshToken:',
-			!!session.refreshToken,
-			'expiresAt:',
-			!!session.expiresAt
-		);
 		return null;
 	}
 
-	console.log(
-		'[AUTH] Session decrypted (AES-256-GCM) successfully, token ends: ...',
-		session.accessToken.slice(-6)
-	);
 	return session;
 }
 
@@ -306,9 +261,6 @@ function decryptLegacyHmac(encoded: string, signature: string): UserSession | nu
 	const expectedBuf = Buffer.from(expectedSignature, 'base64url');
 
 	if (sigBuf.length !== expectedBuf.length || !timingSafeEqual(sigBuf, expectedBuf)) {
-		console.warn(
-			'[AUTH] Legacy session HMAC signature mismatch — cookie was tampered or AUTH_SECRET changed'
-		);
 		return null;
 	}
 
@@ -316,21 +268,9 @@ function decryptLegacyHmac(encoded: string, signature: string): UserSession | nu
 	const session = JSON.parse(payload) as UserSession;
 
 	if (!session.accessToken || !session.refreshToken || !session.expiresAt) {
-		console.warn(
-			'[AUTH] Legacy session structural validation FAILED — missing fields. accessToken:',
-			!!session.accessToken,
-			'refreshToken:',
-			!!session.refreshToken,
-			'expiresAt:',
-			!!session.expiresAt
-		);
 		return null;
 	}
 
-	console.log(
-		'[AUTH] Legacy HMAC session decrypted successfully (will upgrade to AES-GCM on next cookie write), token ends: ...',
-		session.accessToken.slice(-6)
-	);
 	return session;
 }
 

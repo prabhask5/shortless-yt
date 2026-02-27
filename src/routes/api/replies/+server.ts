@@ -11,16 +11,15 @@ import { getCommentReplies } from '$lib/server/youtube';
 export const GET: RequestHandler = async ({ url }) => {
 	const commentId = url.searchParams.get('commentId');
 	const pageToken = url.searchParams.get('pageToken') ?? undefined;
-	console.log('[API REPLIES] Reply request, commentId:', commentId, 'pageToken:', pageToken);
 
 	if (!commentId) {
-		console.error('[API REPLIES] Missing commentId parameter');
 		throw error(400, 'Missing commentId parameter');
 	}
+	if (commentId.length > 50) throw error(400, 'commentId too long');
+	if (pageToken && pageToken.length > 200) throw error(400, 'pageToken too long');
 
 	try {
 		const result = await getCommentReplies(commentId, pageToken);
-		console.log('[API REPLIES] Returning', result.items.length, 'replies for comment:', commentId);
 		return json(
 			{
 				replies: result.items,

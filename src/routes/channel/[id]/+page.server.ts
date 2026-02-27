@@ -17,20 +17,10 @@ import {
 } from '$lib/server/youtube';
 import { filterOutShorts, filterOutBrokenVideos } from '$lib/server/shorts';
 
-async function fetchChannelVideos(
-	channelId: string,
-	channelTitle: string,
-	sort: string,
-	accessToken?: string
-) {
-	console.log('[CHANNEL PAGE] Step 2: Fetching videos + subscription status in parallel');
-
+async function fetchChannelVideos(channelId: string, sort: string, accessToken?: string) {
 	const videoFetch =
 		sort === 'popular'
-			? searchVideos(channelTitle, { order: 'viewCount' }).then((r) => ({
-					items: r.items.filter((v) => v.channelId === channelId),
-					pageInfo: r.pageInfo
-				}))
+			? searchVideos('', { order: 'viewCount', channelId })
 			: getChannelVideos(channelId);
 
 	const [videosResult, isSubscribed] = await Promise.all([
@@ -43,21 +33,12 @@ async function fetchChannelVideos(
 			: Promise.resolve(false)
 	]);
 
-	console.log(
-		'[CHANNEL PAGE] Videos fetched:',
-		videosResult.items.length,
-		'subscribed:',
-		isSubscribed
-	);
-
 	let filteredVideos = filterOutBrokenVideos(videosResult.items);
 	filteredVideos = await filterOutShorts(filteredVideos);
 
 	if (sort === 'oldest') {
 		filteredVideos = filteredVideos.reverse();
 	}
-
-	console.log('[CHANNEL PAGE] After filtering:', filteredVideos.length, 'videos remain');
 
 	return {
 		videos: filteredVideos,
@@ -70,9 +51,7 @@ async function fetchChannelVideos(
 export const load: PageServerLoad = async ({ params, locals, url }) => {
 	const channelId = params.id;
 	const sort = (url.searchParams.get('sort') as 'recent' | 'oldest' | 'popular') ?? 'recent';
-	console.log('[CHANNEL PAGE] Loading channel page, channelId:', channelId, 'sort:', sort);
 
-	console.log('[CHANNEL PAGE] Step 1: Fetching channel details');
 	let channels;
 	try {
 		channels = await getChannelDetails([channelId]);
@@ -82,18 +61,16 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 	}
 
 	if (channels.length === 0) {
-		console.warn('[CHANNEL PAGE] Channel not found:', channelId);
 		throw error(404, 'Channel not found');
 	}
 
 	const channel = channels[0];
-	console.log('[CHANNEL PAGE] Step 1 complete — channel:', channel.title);
 
 	return {
 		channel,
 		sort,
 		streamed: {
-			channelData: fetchChannelVideos(channelId, channel.title, sort, locals.session?.accessToken)
+			channelData: fetchChannelVideos(channelId, sort, locals.session?.accessToken)
 		}
 	};
 };

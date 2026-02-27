@@ -17,21 +17,19 @@ import { getComments } from '$lib/server/youtube';
 export const GET: RequestHandler = async ({ url }) => {
 	const videoId = url.searchParams.get('videoId');
 	const pageToken = url.searchParams.get('pageToken');
-	console.log('[API COMMENTS] Comment request, videoId:', videoId, 'pageToken:', pageToken);
 
 	if (!videoId) {
-		console.error('[API COMMENTS] Missing videoId parameter');
 		throw error(400, 'Missing videoId parameter');
 	}
+	if (videoId.length > 20) throw error(400, 'videoId too long');
 
 	if (!pageToken) {
-		console.error('[API COMMENTS] Missing pageToken parameter');
 		throw error(400, 'Missing pageToken parameter');
 	}
+	if (pageToken.length > 200) throw error(400, 'pageToken too long');
 
 	try {
 		const result = await getComments(videoId, pageToken);
-		console.log('[API COMMENTS] Returning', result.items.length, 'comments for video:', videoId);
 		/* Cache for 5 minutes — matches the server-side TTL cache duration for
 		 * comments. Browsers and CDN edges can serve repeat requests for the same
 		 * comment page without hitting the server. */

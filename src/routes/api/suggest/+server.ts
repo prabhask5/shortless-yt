@@ -8,22 +8,20 @@
  *
  * Returns a JSON array of suggestion strings (or an empty array if no query).
  */
-import { json } from '@sveltejs/kit';
+import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getAutocompleteSuggestions } from '$lib/server/youtube';
 
 export const GET: RequestHandler = async ({ url }) => {
 	const query = url.searchParams.get('q');
-	console.log('[API SUGGEST] Autocomplete request, query:', query);
 
 	if (!query) {
-		console.log('[API SUGGEST] No query — returning empty array');
 		return json([]);
 	}
+	if (query.length > 200) throw error(400, 'q too long');
 
 	try {
 		const suggestions = await getAutocompleteSuggestions(query);
-		console.log('[API SUGGEST] Returning', suggestions.length, 'suggestions for:', query);
 		/* Cache for 5 minutes — autocomplete suggestions for the same prefix
 		 * are stable over short periods. Allows browsers to serve repeat requests
 		 * (e.g. user re-typing a previous query) without hitting the server. */

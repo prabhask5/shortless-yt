@@ -18,8 +18,8 @@
  *   duration, default order.
  * - `video:abc123` — individual video detail fetch (per-ID caching).
  * - `channel:UC123` — individual channel detail fetch (per-ID caching).
- * - `user:subs:x1y2z3ab:` — subscriptions for a user identified by the last
- *   8 characters of their access token (avoids storing the full token in keys).
+ * - `user:subs:<hash>:` — subscriptions for a user identified by a SHA-256
+ *   hash prefix of their access token (avoids storing the token in keys).
  *
  * **Why detail fetches follow search:**
  * The YouTube `search` endpoint only returns `snippet` data (title, thumbnail,
@@ -28,6 +28,7 @@
  * `channels` endpoint is required with the IDs from the search results.
  */
 
+import { createHash } from 'node:crypto';
 import { YOUTUBE_API_KEY } from './env.js';
 import { publicCache, userCache } from './cache.js';
 import type {
@@ -51,6 +52,14 @@ const ONE_DAY = 24 * 60 * 60 * 1000;
 // ===================================================================
 // Internal helpers
 // ===================================================================
+
+/**
+ * Produce a short, collision-resistant hash of an access token for use in cache keys.
+ * Avoids storing raw token suffixes which could leak via debug/logging.
+ */
+function tokenHash(accessToken: string): string {
+	return createHash('sha256').update(accessToken).digest('hex').slice(0, 16);
+}
 
 /**
  * Custom error class for YouTube API quota exhaustion.
@@ -141,7 +150,6 @@ async function youtubeApiFetch(
 ): Promise<unknown> {
 	/* Fail fast if we already know the quota is exhausted */
 	if (isQuotaExhausted()) {
-		console.warn(`[YOUTUBE API] Skipping ${endpoint} — quota exhausted, failing fast`);
 		throw new QuotaExhaustedError();
 	}
 
@@ -160,19 +168,11 @@ async function youtubeApiFetch(
 		headers['Authorization'] = `Bearer ${accessToken}`;
 	}
 
-	/* Log the request — mask the API key in the URL for security */
-	const logUrl = url.toString().replace(/key=[^&]+/, 'key=***MASKED***');
-	console.log(
-		`[YOUTUBE API] Fetching ${endpoint}, authenticated: ${!!accessToken}, url: ${logUrl}`
-	);
-	const startTime = Date.now();
-
 	const res = await fetch(url.toString(), { headers });
-	const elapsed = Date.now() - startTime;
 
 	if (!res.ok) {
 		const errorBody = await res.text();
-		console.error(`[YOUTUBE API] ERROR ${res.status} on ${endpoint} (${elapsed}ms): ${errorBody}`);
+		console.error(`[YOUTUBE API] ERROR ${res.status} on ${endpoint}: ${errorBody}`);
 
 		/* Detect quota exhaustion and set the global flag */
 		if (res.status === 403 && errorBody.includes('quotaExceeded')) {
@@ -185,7 +185,6 @@ async function youtubeApiFetch(
 		throw new Error(`YouTube API error ${res.status} on ${endpoint}: ${errorBody}`);
 	}
 
-	console.log(`[YOUTUBE API] SUCCESS ${endpoint} — ${res.status} (${elapsed}ms)`);
 	return res.json();
 }
 
@@ -310,15 +309,11 @@ function parseCommentItem(item: Record<string, unknown>): CommentItem {
  */
 export async function searchVideos(
 	query: string,
-	options?: { pageToken?: string; videoDuration?: string; order?: string }
+	options?: { pageToken?: string; videoDuration?: string; order?: string; channelId?: string }
 ): Promise<PaginatedResult<VideoItem>> {
-	const cacheKey = `search:v:${query}:${options?.pageToken ?? ''}:${options?.videoDuration ?? ''}:${options?.order ?? ''}`;
+	const cacheKey = `search:v:${query}:${options?.pageToken ?? ''}:${options?.videoDuration ?? ''}:${options?.order ?? ''}:${options?.channelId ?? ''}`;
 	const cached = publicCache.get<PaginatedResult<VideoItem>>(cacheKey);
-	if (cached) {
-		console.log(`[YOUTUBE] searchVideos CACHE HIT for "${query}", ${cached.items.length} items`);
-		return cached;
-	}
-	console.log(`[YOUTUBE] searchVideos CACHE MISS for "${query}", fetching from API...`);
+	if (cached) return cached;
 
 	const params: Record<string, string> = {
 		part: 'snippet',
@@ -329,6 +324,7 @@ export async function searchVideos(
 	if (options?.pageToken) params.pageToken = options.pageToken;
 	if (options?.videoDuration) params.videoDuration = options.videoDuration;
 	if (options?.order) params.order = options.order;
+	if (options?.channelId) params.channelId = options.channelId;
 
 	const data = (await youtubeApiFetch('search', params)) as Record<string, unknown>;
 	const items = (data.items as Record<string, unknown>[]) ?? [];
@@ -337,9 +333,6 @@ export async function searchVideos(
 		.filter(Boolean);
 
 	const videos = videoIds.length > 0 ? await getVideoDetails(videoIds) : [];
-	console.log(
-		`[YOUTUBE] searchVideos for "${query}" — found ${videoIds.length} IDs, got ${videos.length} video details`
-	);
 
 	const pageInfoRaw = data.pageInfo as Record<string, unknown> | undefined;
 	const result: PaginatedResult<VideoItem> = {
@@ -499,15 +492,7 @@ export async function searchMixed(
 		>;
 		nextPageToken?: string;
 	}>(cacheKey);
-	if (cached) {
-		console.log(
-			`[YOUTUBE] searchMixed CACHE HIT for "${query}" types=${typeStr}, ${cached.results.length} results`
-		);
-		return cached;
-	}
-	console.log(
-		`[YOUTUBE] searchMixed CACHE MISS for "${query}" types=${typeStr}, fetching from API...`
-	);
+	if (cached) return cached;
 
 	const params: Record<string, string> = {
 		part: 'snippet',
@@ -520,8 +505,6 @@ export async function searchMixed(
 	const data = (await youtubeApiFetch('search', params)) as Record<string, unknown>;
 	const rawItems = (data.items as Record<string, unknown>[]) ?? [];
 	const nextToken = data.nextPageToken as string | undefined;
-
-	console.log(`[YOUTUBE] searchMixed for "${query}" returned ${rawItems.length} raw items`);
 
 	// Separate items by type and collect IDs for detail fetches
 	const videoIds: string[] = [];
@@ -559,10 +542,6 @@ export async function searchMixed(
 	for (const c of channelDetails) channelMap.set(c.id, c);
 	const playlistMap = new Map<string, PlaylistItem>();
 	for (const p of playlistDetails) playlistMap.set(p.id, p);
-
-	console.log(
-		`[YOUTUBE] searchMixed detail fetch — ${videoDetails.length} videos, ${channelDetails.length} channels, ${playlistDetails.length} playlists`
-	);
 
 	// Reconstruct results in YouTube's original order
 	const results: Array<
@@ -605,13 +584,9 @@ export async function searchMixed(
  * @returns Array of fully-hydrated video items (order may differ from input).
  */
 export async function getVideoDetails(ids: string[]): Promise<VideoItem[]> {
-	console.log(`[YOUTUBE] getVideoDetails called with ${ids.length} IDs`);
 	const results: VideoItem[] = [];
 	const uncachedIds: string[] = [];
 
-	/* Check individual video cache first — avoids redundant API calls when the
-	 * same video ID appears in different batch combinations (e.g. a video that
-	 * shows up in both search results and trending). */
 	for (const id of ids) {
 		const cached = publicCache.get<VideoItem>(`video:${id}`);
 		if (cached) {
@@ -621,16 +596,9 @@ export async function getVideoDetails(ids: string[]): Promise<VideoItem[]> {
 		}
 	}
 
-	if (uncachedIds.length > 0) {
-		console.log(
-			`[YOUTUBE] getVideoDetails — ${results.length} individual cache hits, ${uncachedIds.length} need fetching`
-		);
-	}
-
 	/* Batch-fetch uncached IDs in groups of 50 (YouTube API maximum). */
 	for (let i = 0; i < uncachedIds.length; i += 50) {
 		const batch = uncachedIds.slice(i, i + 50);
-		console.log(`[YOUTUBE] getVideoDetails fetching batch of ${batch.length} from API`);
 		const data = (await youtubeApiFetch('videos', {
 			part: 'snippet,contentDetails,statistics',
 			id: batch.join(','),
@@ -639,17 +607,13 @@ export async function getVideoDetails(ids: string[]): Promise<VideoItem[]> {
 
 		const items = (data.items as Record<string, unknown>[]) ?? [];
 		const videos = items.map(parseVideoItem);
-		console.log(`[YOUTUBE] getVideoDetails batch returned ${videos.length} videos`);
 
-		/* Cache each video individually so future requests for any subset
-		 * of these IDs will hit the per-ID cache. */
 		for (const video of videos) {
 			publicCache.set(`video:${video.id}`, video, ONE_HOUR);
 		}
 		results.push(...videos);
 	}
 
-	console.log(`[YOUTUBE] getVideoDetails total: ${results.length} videos`);
 	return results;
 }
 
@@ -665,11 +629,9 @@ export async function getVideoDetails(ids: string[]): Promise<VideoItem[]> {
  * @returns Array of fully-hydrated channel items.
  */
 export async function getChannelDetails(ids: string[]): Promise<ChannelItem[]> {
-	console.log(`[YOUTUBE] getChannelDetails called with ${ids.length} IDs`);
 	const results: ChannelItem[] = [];
 	const uncachedIds: string[] = [];
 
-	/* Per-ID cache check — same pattern as getVideoDetails. */
 	for (const id of ids) {
 		const cached = publicCache.get<ChannelItem>(`channel:${id}`);
 		if (cached) {
@@ -677,12 +639,6 @@ export async function getChannelDetails(ids: string[]): Promise<ChannelItem[]> {
 		} else {
 			uncachedIds.push(id);
 		}
-	}
-
-	if (uncachedIds.length > 0) {
-		console.log(
-			`[YOUTUBE] getChannelDetails — ${results.length} individual cache hits, ${uncachedIds.length} need fetching`
-		);
 	}
 
 	for (let i = 0; i < uncachedIds.length; i += 50) {
@@ -695,7 +651,6 @@ export async function getChannelDetails(ids: string[]): Promise<ChannelItem[]> {
 
 		const items = (data.items as Record<string, unknown>[]) ?? [];
 		const channels = items.map(parseChannelItem);
-		console.log(`[YOUTUBE] getChannelDetails batch returned ${channels.length} channels`);
 
 		for (const channel of channels) {
 			publicCache.set(`channel:${channel.id}`, channel, ONE_HOUR);
@@ -703,7 +658,6 @@ export async function getChannelDetails(ids: string[]): Promise<ChannelItem[]> {
 		results.push(...channels);
 	}
 
-	console.log(`[YOUTUBE] getChannelDetails total: ${results.length} channels`);
 	return results;
 }
 
@@ -717,7 +671,6 @@ export async function getChannelDetails(ids: string[]): Promise<ChannelItem[]> {
  * @returns Array of fully-hydrated playlist items.
  */
 export async function getPlaylistDetails(ids: string[]): Promise<PlaylistItem[]> {
-	console.log(`[YOUTUBE] getPlaylistDetails called with ${ids.length} IDs`);
 	const results: PlaylistItem[] = [];
 	const uncachedIds: string[] = [];
 
@@ -730,12 +683,6 @@ export async function getPlaylistDetails(ids: string[]): Promise<PlaylistItem[]>
 		}
 	}
 
-	if (uncachedIds.length > 0) {
-		console.log(
-			`[YOUTUBE] getPlaylistDetails — ${results.length} cache hits, ${uncachedIds.length} need fetching`
-		);
-	}
-
 	for (let i = 0; i < uncachedIds.length; i += 50) {
 		const batch = uncachedIds.slice(i, i + 50);
 		const data = (await youtubeApiFetch('playlists', {
@@ -746,7 +693,6 @@ export async function getPlaylistDetails(ids: string[]): Promise<PlaylistItem[]>
 
 		const items = (data.items as Record<string, unknown>[]) ?? [];
 		const playlists = items.map(parsePlaylistItem);
-		console.log(`[YOUTUBE] getPlaylistDetails batch returned ${playlists.length} playlists`);
 
 		for (const pl of playlists) {
 			publicCache.set(`playlist:${pl.id}`, pl, ONE_HOUR);
@@ -754,7 +700,6 @@ export async function getPlaylistDetails(ids: string[]): Promise<PlaylistItem[]>
 		results.push(...playlists);
 	}
 
-	console.log(`[YOUTUBE] getPlaylistDetails total: ${results.length} playlists`);
 	return results;
 }
 
@@ -773,17 +718,12 @@ export async function getPlaylistDetails(ids: string[]): Promise<PlaylistItem[]>
  */
 export async function getChannelVideos(
 	channelId: string,
-	pageToken?: string
+	pageToken?: string,
+	maxResults: number = 20
 ): Promise<PaginatedResult<VideoItem>> {
-	const cacheKey = `chvideos:${channelId}:${pageToken ?? ''}`;
+	const cacheKey = `chvideos:${channelId}:${pageToken ?? ''}:${maxResults}`;
 	const cached = publicCache.get<PaginatedResult<VideoItem>>(cacheKey);
-	if (cached) {
-		console.log(
-			`[YOUTUBE] getChannelVideos CACHE HIT for ${channelId}, ${cached.items.length} items`
-		);
-		return cached;
-	}
-	console.log(`[YOUTUBE] getChannelVideos CACHE MISS for ${channelId}, fetching from API...`);
+	if (cached) return cached;
 
 	// Step 1: Get channel's uploads playlist ID
 	const channelData = (await youtubeApiFetch('channels', {
@@ -808,7 +748,7 @@ export async function getChannelVideos(
 	const params: Record<string, string> = {
 		part: 'snippet',
 		playlistId: uploadsPlaylistId,
-		maxResults: '20'
+		maxResults: String(maxResults)
 	};
 	if (pageToken) params.pageToken = pageToken;
 
@@ -860,13 +800,7 @@ export async function getTrending(
 ): Promise<PaginatedResult<VideoItem>> {
 	const cacheKey = `trending:${categoryId ?? ''}:${pageToken ?? ''}`;
 	const cached = publicCache.get<PaginatedResult<VideoItem>>(cacheKey);
-	if (cached) {
-		console.log(`[YOUTUBE] getTrending CACHE HIT, ${cached.items.length} items`);
-		return cached;
-	}
-	console.log(
-		`[YOUTUBE] getTrending CACHE MISS, fetching from API... categoryId: ${categoryId ?? 'none'}`
-	);
+	if (cached) return cached;
 
 	const params: Record<string, string> = {
 		part: 'snippet,contentDetails,statistics',
@@ -880,7 +814,6 @@ export async function getTrending(
 	const data = (await youtubeApiFetch('videos', params)) as Record<string, unknown>;
 	const items = (data.items as Record<string, unknown>[]) ?? [];
 	const videos = items.map(parseVideoItem);
-	console.log(`[YOUTUBE] getTrending returned ${videos.length} videos`);
 
 	const pageInfoRaw = data.pageInfo as Record<string, unknown> | undefined;
 	const result: PaginatedResult<VideoItem> = {
@@ -907,11 +840,7 @@ export async function getTrending(
 export async function getVideoCategories(): Promise<Array<{ id: string; title: string }>> {
 	const cacheKey = 'categories';
 	const cached = publicCache.get<Array<{ id: string; title: string }>>(cacheKey);
-	if (cached) {
-		console.log(`[YOUTUBE] getVideoCategories CACHE HIT, ${cached.length} categories`);
-		return cached;
-	}
-	console.log('[YOUTUBE] getVideoCategories CACHE MISS, fetching from API...');
+	if (cached) return cached;
 
 	const data = (await youtubeApiFetch('videoCategories', {
 		part: 'snippet',
@@ -932,7 +861,6 @@ export async function getVideoCategories(): Promise<Array<{ id: string; title: s
 			};
 		});
 
-	console.log(`[YOUTUBE] getVideoCategories returned ${categories.length} assignable categories`);
 	publicCache.set(cacheKey, categories, ONE_DAY);
 	return categories;
 }
@@ -954,11 +882,7 @@ export async function getComments(
 ): Promise<PaginatedResult<CommentItem>> {
 	const cacheKey = `comments:${videoId}:${pageToken ?? ''}`;
 	const cached = publicCache.get<PaginatedResult<CommentItem>>(cacheKey);
-	if (cached) {
-		console.log(`[YOUTUBE] getComments CACHE HIT for ${videoId}, ${cached.items.length} comments`);
-		return cached;
-	}
-	console.log(`[YOUTUBE] getComments CACHE MISS for ${videoId}, fetching from API...`);
+	if (cached) return cached;
 
 	const params: Record<string, string> = {
 		part: 'snippet',
@@ -971,7 +895,6 @@ export async function getComments(
 	const data = (await youtubeApiFetch('commentThreads', params)) as Record<string, unknown>;
 	const items = (data.items as Record<string, unknown>[]) ?? [];
 	const comments = items.map(parseCommentItem);
-	console.log(`[YOUTUBE] getComments for ${videoId} returned ${comments.length} comments`);
 
 	const pageInfoRaw = data.pageInfo as Record<string, unknown> | undefined;
 	const result: PaginatedResult<CommentItem> = {
@@ -1002,13 +925,7 @@ export async function getCommentReplies(
 ): Promise<PaginatedResult<CommentItem>> {
 	const cacheKey = `replies:${commentId}:${pageToken ?? ''}`;
 	const cached = publicCache.get<PaginatedResult<CommentItem>>(cacheKey);
-	if (cached) {
-		console.log(
-			`[YOUTUBE] getCommentReplies CACHE HIT for ${commentId}, ${cached.items.length} replies`
-		);
-		return cached;
-	}
-	console.log(`[YOUTUBE] getCommentReplies CACHE MISS for ${commentId}, fetching from API...`);
+	if (cached) return cached;
 
 	const params: Record<string, string> = {
 		part: 'snippet',
@@ -1032,8 +949,6 @@ export async function getCommentReplies(
 			replyCount: 0
 		};
 	});
-
-	console.log(`[YOUTUBE] getCommentReplies for ${commentId} returned ${replies.length} replies`);
 
 	const pageInfoRaw = data.pageInfo as Record<string, unknown> | undefined;
 	const result: PaginatedResult<CommentItem> = {
@@ -1149,13 +1064,9 @@ export async function getSubscriptions(
 	accessToken: string,
 	pageToken?: string
 ): Promise<PaginatedResult<ChannelItem>> {
-	const cacheKey = `user:subs:${accessToken.slice(-8)}:${pageToken ?? ''}`;
+	const cacheKey = `user:subs:${tokenHash(accessToken)}:${pageToken ?? ''}`;
 	const cached = userCache.get<PaginatedResult<ChannelItem>>(cacheKey);
-	if (cached) {
-		console.log(`[YOUTUBE] getSubscriptions CACHE HIT, ${cached.items.length} channels`);
-		return cached;
-	}
-	console.log('[YOUTUBE] getSubscriptions CACHE MISS, fetching from API...');
+	if (cached) return cached;
 
 	const params: Record<string, string> = {
 		part: 'snippet',
@@ -1211,13 +1122,9 @@ export async function getSubscriptions(
  * @returns Whether the user is subscribed to the channel.
  */
 export async function checkSubscription(accessToken: string, channelId: string): Promise<boolean> {
-	const cacheKey = `user:sub:${accessToken.slice(-8)}:${channelId}`;
+	const cacheKey = `user:sub:${tokenHash(accessToken)}:${channelId}`;
 	const cached = userCache.get<boolean>(cacheKey);
-	if (cached !== undefined) {
-		console.log(`[YOUTUBE] checkSubscription CACHE HIT for ${channelId}: ${cached}`);
-		return cached;
-	}
-	console.log(`[YOUTUBE] checkSubscription CACHE MISS for ${channelId}, fetching...`);
+	if (cached !== undefined) return cached;
 
 	try {
 		const data = (await youtubeApiFetch(
@@ -1232,7 +1139,6 @@ export async function checkSubscription(accessToken: string, channelId: string):
 
 		const items = (data.items as unknown[]) ?? [];
 		const isSubscribed = items.length > 0;
-		console.log(`[YOUTUBE] checkSubscription for ${channelId}: ${isSubscribed}`);
 		userCache.set(cacheKey, isSubscribed, THIRTY_MINUTES);
 		return isSubscribed;
 	} catch (err) {
@@ -1252,13 +1158,9 @@ export async function getLikedVideos(
 	accessToken: string,
 	pageToken?: string
 ): Promise<PaginatedResult<VideoItem>> {
-	const cacheKey = `user:liked:${accessToken.slice(-8)}:${pageToken ?? ''}`;
+	const cacheKey = `user:liked:${tokenHash(accessToken)}:${pageToken ?? ''}`;
 	const cached = userCache.get<PaginatedResult<VideoItem>>(cacheKey);
-	if (cached) {
-		console.log(`[YOUTUBE] getLikedVideos CACHE HIT, ${cached.items.length} videos`);
-		return cached;
-	}
-	console.log('[YOUTUBE] getLikedVideos CACHE MISS, fetching from API...');
+	if (cached) return cached;
 
 	const params: Record<string, string> = {
 		part: 'snippet,contentDetails,statistics',
@@ -1295,13 +1197,9 @@ export async function getUserPlaylists(
 	accessToken: string,
 	pageToken?: string
 ): Promise<PaginatedResult<PlaylistItem>> {
-	const cacheKey = `user:playlists:${accessToken.slice(-8)}:${pageToken ?? ''}`;
+	const cacheKey = `user:playlists:${tokenHash(accessToken)}:${pageToken ?? ''}`;
 	const cached = userCache.get<PaginatedResult<PlaylistItem>>(cacheKey);
-	if (cached) {
-		console.log(`[YOUTUBE] getUserPlaylists CACHE HIT, ${cached.items.length} playlists`);
-		return cached;
-	}
-	console.log('[YOUTUBE] getUserPlaylists CACHE MISS, fetching from API...');
+	if (cached) return cached;
 
 	const params: Record<string, string> = {
 		part: 'snippet,contentDetails',
@@ -1459,11 +1357,10 @@ export async function getSubscriptionFeed(
 
 	if (!cursor) {
 		// First page: discover subscriptions → uploads playlists → initial batches
-		const cacheKey = `user:subfeed:plids:${accessToken.slice(-8)}`;
+		const cacheKey = `user:subfeed:plids:${tokenHash(accessToken)}`;
 		let playlistIds = userCache.get<string[]>(cacheKey);
 
 		if (!playlistIds) {
-			console.log('[YOUTUBE] getSubscriptionFeed — discovering subscriptions...');
 			const subs = await getSubscriptions(accessToken);
 			const channelIds = subs.items
 				.map((ch) => ch.id)
@@ -1486,12 +1383,7 @@ export async function getSubscriptionFeed(
 				if (rp?.uploads) playlistIds.push(rp.uploads);
 			}
 
-			console.log(`[YOUTUBE] getSubscriptionFeed — found ${playlistIds.length} uploads playlists`);
 			userCache.set(cacheKey, playlistIds, THIRTY_MINUTES);
-		} else {
-			console.log(
-				`[YOUTUBE] getSubscriptionFeed playlistIds CACHE HIT, ${playlistIds.length} playlists`
-			);
 		}
 
 		// Fetch first batch from all channels in parallel
@@ -1591,9 +1483,6 @@ export async function getSubscriptionFeed(
 				}))
 			: undefined;
 
-	console.log(
-		`[YOUTUBE] getSubscriptionFeed — returning ${orderedVideos.length} videos, ${activeBuffers.length} channels active`
-	);
 	return { items: orderedVideos, cursor: newCursor };
 }
 
@@ -1609,13 +1498,9 @@ export async function getSubscriptionFeed(
 export async function getUserProfile(
 	accessToken: string
 ): Promise<{ avatarUrl: string; channelTitle: string } | null> {
-	const cacheKey = `user:profile:${accessToken.slice(-8)}`;
+	const cacheKey = `user:profile:${tokenHash(accessToken)}`;
 	const cached = userCache.get<{ avatarUrl: string; channelTitle: string }>(cacheKey);
-	if (cached) {
-		console.log(`[YOUTUBE] getUserProfile CACHE HIT`);
-		return cached;
-	}
-	console.log('[YOUTUBE] getUserProfile CACHE MISS, fetching from API...');
+	if (cached) return cached;
 
 	try {
 		const data = (await youtubeApiFetch(
@@ -1625,10 +1510,7 @@ export async function getUserProfile(
 		)) as Record<string, unknown>;
 
 		const items = (data.items as Record<string, unknown>[]) ?? [];
-		if (items.length === 0) {
-			console.warn('[YOUTUBE] getUserProfile returned no channels');
-			return null;
-		}
+		if (items.length === 0) return null;
 
 		const snippet = items[0].snippet as Record<string, unknown> | undefined;
 		const thumbnails = snippet?.thumbnails as Record<string, Record<string, unknown>> | undefined;
@@ -1638,7 +1520,6 @@ export async function getUserProfile(
 			channelTitle: (snippet?.title as string) ?? ''
 		};
 
-		console.log('[YOUTUBE] getUserProfile SUCCESS:', profile.channelTitle);
 		userCache.set(cacheKey, profile, THIRTY_MINUTES);
 		return profile;
 	} catch (err) {
@@ -1670,13 +1551,7 @@ export async function getAutocompleteSuggestions(query: string): Promise<string[
 
 	const cacheKey = `autocomplete:${query}`;
 	const cached = publicCache.get<string[]>(cacheKey);
-	if (cached) {
-		console.log(
-			`[YOUTUBE] getAutocompleteSuggestions CACHE HIT for "${query}", ${cached.length} suggestions`
-		);
-		return cached;
-	}
-	console.log(`[YOUTUBE] getAutocompleteSuggestions CACHE MISS for "${query}", fetching...`);
+	if (cached) return cached;
 
 	try {
 		const url = `https://suggestqueries-clients6.youtube.com/complete/search?client=youtube&ds=yt&q=${encodeURIComponent(query)}`;
@@ -1695,9 +1570,6 @@ export async function getAutocompleteSuggestions(query: string): Promise<string[
 		const parsed = JSON.parse(match[0]) as unknown[];
 		const suggestions = (parsed[1] as unknown[][])?.map((item) => item[0] as string) ?? [];
 
-		console.log(
-			`[YOUTUBE] getAutocompleteSuggestions for "${query}" returned ${suggestions.length} suggestions`
-		);
 		publicCache.set(cacheKey, suggestions, THIRTY_MINUTES);
 		return suggestions;
 	} catch (err) {
