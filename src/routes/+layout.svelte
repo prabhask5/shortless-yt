@@ -15,6 +15,7 @@
 <script lang="ts">
 	import '../app.css';
 	import Header from '$lib/components/Header.svelte';
+	import ReloadPrompt from '$lib/components/ReloadPrompt.svelte';
 	import { authState } from '$lib/stores/auth';
 	import { page } from '$app/stores';
 
@@ -46,4 +47,5 @@
 	<main class="flex-1">
 		{@render children()}
 	</main>
+	<ReloadPrompt />
 </div>

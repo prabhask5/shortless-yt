@@ -1,3 +1,5 @@
+/// <reference types="vite-plugin-pwa/vanillajs" />
+
 declare global {
 	namespace App {
 		interface Locals {
