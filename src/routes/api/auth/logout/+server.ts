@@ -12,6 +12,8 @@ import type { RequestHandler } from './$types';
 import { SESSION_COOKIE_NAME } from '$lib/server/auth';
 
 export const GET: RequestHandler = async ({ cookies }) => {
+	console.log('[AUTH LOGOUT] Logout request received, clearing session cookie');
 	cookies.delete(SESSION_COOKIE_NAME, { path: '/' });
+	console.log('[AUTH LOGOUT] Session cookie cleared, redirecting to /');
 	throw redirect(302, '/');
 };

@@ -16,18 +16,36 @@ import { filterOutShorts } from '$lib/server/shorts';
 
 export const load: PageServerLoad = async ({ params }) => {
 	const playlistId = params.id;
+	console.log('[PLAYLIST PAGE] Loading playlist page, playlistId:', playlistId);
 
-	/* Fetch metadata and videos in parallel for minimum latency */
+	console.log('[PLAYLIST PAGE] Fetching playlist metadata + videos in parallel');
 	const [playlist, videosResult] = await Promise.all([
-		getPlaylist(playlistId),
-		getPlaylistVideos(playlistId)
+		getPlaylist(playlistId).catch((err) => {
+			console.error('[PLAYLIST PAGE] getPlaylist FAILED for', playlistId, ':', err);
+			return null;
+		}),
+		getPlaylistVideos(playlistId).catch((err) => {
+			console.error('[PLAYLIST PAGE] getPlaylistVideos FAILED for', playlistId, ':', err);
+			return {
+				items: [] as import('$lib/types').VideoItem[],
+				pageInfo: { totalResults: 0, nextPageToken: undefined as string | undefined }
+			};
+		})
 	]);
 
 	if (!playlist) {
+		console.warn('[PLAYLIST PAGE] Playlist not found:', playlistId);
 		throw error(404, 'Playlist not found');
 	}
 
+	console.log(
+		'[PLAYLIST PAGE] Playlist:',
+		playlist.title,
+		'videos fetched:',
+		videosResult.items.length
+	);
 	const filteredVideos = await filterOutShorts(videosResult.items);
+	console.log('[PLAYLIST PAGE] After shorts filter:', filteredVideos.length, 'videos remain');
 
 	return {
 		playlist,

@@ -14,10 +14,19 @@ import { getAutocompleteSuggestions } from '$lib/server/youtube';
 
 export const GET: RequestHandler = async ({ url }) => {
 	const query = url.searchParams.get('q');
+	console.log('[API SUGGEST] Autocomplete request, query:', query);
+
 	if (!query) {
+		console.log('[API SUGGEST] No query — returning empty array');
 		return json([]);
 	}
 
-	const suggestions = await getAutocompleteSuggestions(query);
-	return json(suggestions);
+	try {
+		const suggestions = await getAutocompleteSuggestions(query);
+		console.log('[API SUGGEST] Returning', suggestions.length, 'suggestions for:', query);
+		return json(suggestions);
+	} catch (err) {
+		console.error('[API SUGGEST] getAutocompleteSuggestions FAILED:', err);
+		return json([]);
+	}
 };

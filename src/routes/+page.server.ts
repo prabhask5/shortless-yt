@@ -13,9 +13,6 @@ import type { PaginatedResult, VideoItem, ChannelItem } from '$lib/types';
 import { getTrending, getVideoCategories, getSubscriptions } from '$lib/server/youtube';
 import { filterOutShorts } from '$lib/server/shorts';
 
-/* Empty fallbacks used when API calls fail gracefully.
- * This prevents the page from erroring out entirely if, for example,
- * the user's OAuth token has expired but the trending endpoint still works. */
 const emptyChannels: PaginatedResult<ChannelItem> = {
 	items: [],
 	pageInfo: { totalResults: 0 }
@@ -27,19 +24,36 @@ const emptyVideos: PaginatedResult<VideoItem> = {
 };
 
 export const load: PageServerLoad = async ({ locals }) => {
+	console.log('[HOME PAGE] Loading home page, authenticated:', !!locals.session);
+
 	if (locals.session) {
-		/* Authenticated path: fetch subscriptions (requires user token) and
-		 * trending videos in parallel. Either can fail independently without
-		 * breaking the whole page thanks to the .catch() fallbacks. */
+		console.log('[HOME PAGE] Authenticated path — fetching subscriptions + trending in parallel');
 		const [subscriptions, trending] = await Promise.all([
-			getSubscriptions(locals.session.accessToken).catch(() => emptyChannels),
-			getTrending().catch(() => emptyVideos)
+			getSubscriptions(locals.session.accessToken).catch((err) => {
+				console.error('[HOME PAGE] getSubscriptions FAILED:', err);
+				return emptyChannels;
+			}),
+			getTrending().catch((err) => {
+				console.error('[HOME PAGE] getTrending FAILED (auth path):', err);
+				return emptyVideos;
+			})
 		]);
 
+		console.log(
+			'[HOME PAGE] Auth results — subscriptions:',
+			subscriptions.items.length,
+			'trending:',
+			trending.items.length
+		);
 		const filteredTrending = await filterOutShorts(trending.items);
+		console.log(
+			'[HOME PAGE] After shorts filter:',
+			filteredTrending.length,
+			'videos remain (from',
+			trending.items.length,
+			')'
+		);
 
-		/* `authenticated: true as const` creates a discriminated union so the
-		 * Svelte page can narrow the type and access `subscriptions` safely. */
 		return {
 			authenticated: true as const,
 			subscriptions: subscriptions.items,
@@ -48,15 +62,32 @@ export const load: PageServerLoad = async ({ locals }) => {
 		};
 	}
 
-	/* Anonymous path: show category chips (no auth needed) alongside trending.
-	 * Both calls are wrapped in .catch() so the page still renders even if
-	 * the API key is invalid or quota is exhausted. */
+	console.log('[HOME PAGE] Anonymous path — fetching trending + categories in parallel');
 	const [trending, categories] = await Promise.all([
-		getTrending().catch(() => emptyVideos),
-		getVideoCategories().catch(() => [] as { id: string; title: string }[])
+		getTrending().catch((err) => {
+			console.error('[HOME PAGE] getTrending FAILED (anon path):', err);
+			return emptyVideos;
+		}),
+		getVideoCategories().catch((err) => {
+			console.error('[HOME PAGE] getVideoCategories FAILED:', err);
+			return [] as { id: string; title: string }[];
+		})
 	]);
 
+	console.log(
+		'[HOME PAGE] Anon results — trending:',
+		trending.items.length,
+		'categories:',
+		categories.length
+	);
 	const filteredTrending = await filterOutShorts(trending.items);
+	console.log(
+		'[HOME PAGE] After shorts filter:',
+		filteredTrending.length,
+		'videos remain (from',
+		trending.items.length,
+		')'
+	);
 
 	return {
 		authenticated: false as const,

@@ -17,18 +17,27 @@ import { getComments } from '$lib/server/youtube';
 export const GET: RequestHandler = async ({ url }) => {
 	const videoId = url.searchParams.get('videoId');
 	const pageToken = url.searchParams.get('pageToken');
+	console.log('[API COMMENTS] Comment request, videoId:', videoId, 'pageToken:', pageToken);
 
 	if (!videoId) {
+		console.error('[API COMMENTS] Missing videoId parameter');
 		throw error(400, 'Missing videoId parameter');
 	}
 
 	if (!pageToken) {
+		console.error('[API COMMENTS] Missing pageToken parameter');
 		throw error(400, 'Missing pageToken parameter');
 	}
 
-	const result = await getComments(videoId, pageToken);
-	return json({
-		comments: result.items,
-		nextPageToken: result.pageInfo.nextPageToken
-	});
+	try {
+		const result = await getComments(videoId, pageToken);
+		console.log('[API COMMENTS] Returning', result.items.length, 'comments for video:', videoId);
+		return json({
+			comments: result.items,
+			nextPageToken: result.pageInfo.nextPageToken
+		});
+	} catch (err) {
+		console.error('[API COMMENTS] getComments FAILED for', videoId, ':', err);
+		return json({ comments: [], nextPageToken: undefined });
+	}
 };

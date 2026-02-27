@@ -49,7 +49,10 @@ export function parseDurationSeconds(iso8601: string): number {
  */
 export async function isShort(videoId: string): Promise<boolean> {
 	const cached = shortsCache.get(videoId);
-	if (cached !== undefined) return cached;
+	if (cached !== undefined) {
+		console.log(`[SHORTS] isShort CACHE HIT for ${videoId}: ${cached}`);
+		return cached;
+	}
 
 	try {
 		const res = await fetch(`https://www.youtube.com/shorts/${videoId}`, {
@@ -57,13 +60,14 @@ export async function isShort(videoId: string): Promise<boolean> {
 			redirect: 'manual'
 		});
 
-		// 200 = it's a Short (page exists at /shorts/ URL)
-		// 303 or other redirect = it's a regular video (redirects away from /shorts/)
 		const result = res.status === 200;
+		console.log(
+			`[SHORTS] isShort HEAD probe for ${videoId}: status=${res.status}, isShort=${result}`
+		);
 		shortsCache.set(videoId, result);
 		return result;
-	} catch {
-		// On network error, assume it's not a short (don't filter it out)
+	} catch (err) {
+		console.warn(`[SHORTS] isShort HEAD probe FAILED for ${videoId}:`, err);
 		return false;
 	}
 }
@@ -78,6 +82,7 @@ export async function isShort(videoId: string): Promise<boolean> {
  * 4. Videos with no duration info - check with isShort().
  */
 export async function filterOutShorts(videos: VideoItem[]): Promise<VideoItem[]> {
+	console.log(`[SHORTS] filterOutShorts called with ${videos.length} videos`);
 	const results: VideoItem[] = [];
 	const toCheck: Array<{ video: VideoItem; index: number }> = [];
 
@@ -86,24 +91,34 @@ export async function filterOutShorts(videos: VideoItem[]): Promise<VideoItem[]>
 		const durationSeconds = video.duration ? parseDurationSeconds(video.duration) : 0;
 
 		if (video.duration && durationSeconds > 180) {
-			// Definitely not a Short
 			results.push(video);
 		} else {
-			// Could be a Short - need to check
 			toCheck.push({ video, index: i });
 		}
 	}
 
-	// Batch check all borderline videos concurrently
+	console.log(
+		`[SHORTS] ${results.length} videos passed duration pre-filter (>180s), ${toCheck.length} need HEAD probe`
+	);
+
 	if (toCheck.length > 0) {
 		const checks = await Promise.all(toCheck.map(({ video }) => isShort(video.id)));
 
+		let filtered = 0;
 		for (let i = 0; i < toCheck.length; i++) {
 			if (!checks[i]) {
 				results.push(toCheck[i].video);
+			} else {
+				filtered++;
 			}
 		}
+		console.log(
+			`[SHORTS] HEAD probe results: ${filtered} shorts removed, ${toCheck.length - filtered} kept`
+		);
 	}
 
+	console.log(
+		`[SHORTS] filterOutShorts final: ${results.length} videos remain from original ${videos.length}`
+	);
 	return results;
 }

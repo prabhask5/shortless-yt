@@ -22,25 +22,34 @@ import { decryptSession, SESSION_COOKIE_NAME } from '$lib/server/auth';
 
 export const handle: Handle = async ({ event, resolve }) => {
 	const cookie = event.cookies.get(SESSION_COOKIE_NAME);
+	const path = event.url.pathname;
+
+	console.log(
+		`[HOOKS] Incoming request: ${event.request.method} ${path}, cookie present: ${!!cookie}`
+	);
 
 	if (cookie) {
 		const session = decryptSession(cookie);
 
 		if (session) {
-			/* Valid session -- expose tokens to route handlers via locals. */
+			const isExpired = Date.now() > session.expiresAt;
+			console.log(
+				`[HOOKS] Session valid, accessToken ends: ...${session.accessToken.slice(-6)}, expired: ${isExpired}, expiresAt: ${new Date(session.expiresAt).toISOString()}`
+			);
 			event.locals.session = {
 				accessToken: session.accessToken,
 				refreshToken: session.refreshToken,
 				expiresAt: session.expiresAt
 			};
 		} else {
-			/* Cookie exists but failed HMAC verification or structural validation.
-			 * Delete it to prevent the browser from sending it on every subsequent
-			 * request, and treat the user as unauthenticated. */
+			console.warn(
+				`[HOOKS] Session cookie INVALID (HMAC failed or structural validation failed) — deleting cookie`
+			);
 			event.locals.session = null;
 			event.cookies.delete(SESSION_COOKIE_NAME, { path: '/' });
 		}
 	} else {
+		console.log(`[HOOKS] No session cookie — unauthenticated request`);
 		event.locals.session = null;
 	}
 

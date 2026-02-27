@@ -94,10 +94,17 @@ class TTLCache {
 	 */
 	private cleanup(): void {
 		const now = Date.now();
+		let evicted = 0;
 		for (const [key, entry] of this.store) {
 			if (now > entry.expiresAt) {
 				this.store.delete(key);
+				evicted++;
 			}
+		}
+		if (evicted > 0) {
+			console.log(
+				`[CACHE] Background cleanup evicted ${evicted} expired entries, ${this.store.size} remaining`
+			);
 		}
 	}
 

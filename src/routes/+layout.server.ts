@@ -11,10 +11,11 @@
 import type { LayoutServerLoad } from './$types';
 
 export const load: LayoutServerLoad = async ({ locals }) => {
+	console.log('[LAYOUT] Root layout load, session present:', !!locals.session);
 	if (locals.session) {
-		/* User is authenticated -- return minimal profile info for the Header.
-		 * Avatar and channel title are currently empty placeholders because
-		 * fetching the full profile here would add latency to every navigation. */
+		console.log(
+			'[LAYOUT] Returning authenticated user shell (avatarUrl/channelTitle are empty placeholders)'
+		);
 		return {
 			user: {
 				avatarUrl: '',
@@ -22,5 +23,6 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 			}
 		};
 	}
+	console.log('[LAYOUT] No session — returning user: null');
 	return { user: null };
 };

@@ -15,13 +15,25 @@ import { getLikedVideos } from '$lib/server/youtube';
 import { filterOutShorts } from '$lib/server/shorts';
 
 export const load: PageServerLoad = async ({ locals }) => {
-	/* Auth guard: redirect unauthenticated users to home */
+	console.log('[LIKED PAGE] Loading liked videos, authenticated:', !!locals.session);
+
 	if (!locals.session) {
+		console.log('[LIKED PAGE] No session — redirecting to home');
 		throw redirect(302, '/');
 	}
 
-	const result = await getLikedVideos(locals.session.accessToken);
+	console.log('[LIKED PAGE] Fetching liked videos');
+	let result;
+	try {
+		result = await getLikedVideos(locals.session.accessToken);
+	} catch (err) {
+		console.error('[LIKED PAGE] getLikedVideos FAILED:', err);
+		return { videos: [], nextPageToken: undefined };
+	}
+
+	console.log('[LIKED PAGE] Liked videos fetched:', result.items.length);
 	const filtered = await filterOutShorts(result.items);
+	console.log('[LIKED PAGE] After shorts filter:', filtered.length, 'videos remain');
 
 	return {
 		videos: filtered,

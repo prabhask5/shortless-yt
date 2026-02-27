@@ -23,32 +23,51 @@ const emptyComments = (): PaginatedResult<CommentItem> => ({
 
 export const load: PageServerLoad = async ({ url }) => {
 	const videoId = url.searchParams.get('v');
+	console.log('[WATCH PAGE] Loading watch page, videoId:', videoId);
+
 	if (!videoId) {
+		console.error('[WATCH PAGE] Missing video ID in URL');
 		throw error(400, 'Missing video ID');
 	}
 
-	/* Parse the optional `t` (time) param, used for chapter links and shared
-	 * timestamps (e.g. /watch?v=abc&t=120 starts at 2:00) */
 	const startTime = url.searchParams.get('t');
 
-	/* Phase 1: fetch video details first -- we need channelId for the next step */
-	const videos = await getVideoDetails([videoId]);
+	console.log('[WATCH PAGE] Phase 1: Fetching video details for', videoId);
+	let videos;
+	try {
+		videos = await getVideoDetails([videoId]);
+	} catch (err) {
+		console.error('[WATCH PAGE] getVideoDetails FAILED for', videoId, ':', err);
+		throw error(500, 'Failed to load video details');
+	}
 
 	if (videos.length === 0) {
+		console.warn('[WATCH PAGE] Video not found:', videoId);
 		throw error(404, 'Video not found');
 	}
 
 	const video = videos[0];
+	console.log('[WATCH PAGE] Phase 1 complete — video:', video.title, 'channel:', video.channelId);
 
-	/* Phase 2: fetch channel details and comments in parallel.
-	 * Comments use .catch() so a failure (e.g. comments disabled) does not
-	 * break the entire page. */
+	console.log('[WATCH PAGE] Phase 2: Fetching channel details + comments in parallel');
 	const [channels, comments] = await Promise.all([
-		getChannelDetails([video.channelId]),
-		getComments(videoId).catch(emptyComments)
+		getChannelDetails([video.channelId]).catch((err) => {
+			console.error('[WATCH PAGE] getChannelDetails FAILED:', err);
+			return [];
+		}),
+		getComments(videoId).catch((err) => {
+			console.warn('[WATCH PAGE] getComments FAILED (may be disabled):', err);
+			return emptyComments();
+		})
 	]);
 
 	const channel = channels[0] ?? null;
+	console.log(
+		'[WATCH PAGE] Phase 2 complete — channel:',
+		channel?.title ?? 'null',
+		'comments:',
+		comments.items.length
+	);
 
 	return {
 		video,

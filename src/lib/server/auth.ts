@@ -40,18 +40,28 @@ const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
  * @returns A fully-qualified URL to redirect the user to Google's consent screen.
  */
 export function getGoogleAuthUrl(): string {
+	const clientId = GOOGLE_CLIENT_ID();
+	const appUrl = PUBLIC_APP_URL();
+	const redirectUri = `${appUrl}/api/auth/callback`;
+	console.log(
+		'[AUTH] Building Google OAuth URL, client_id:',
+		clientId.slice(0, 12) + '...',
+		'redirect_uri:',
+		redirectUri
+	);
+
 	const params = new URLSearchParams({
-		client_id: GOOGLE_CLIENT_ID(),
-		redirect_uri: `${PUBLIC_APP_URL()}/api/auth/callback`,
+		client_id: clientId,
+		redirect_uri: redirectUri,
 		response_type: 'code',
 		scope: 'https://www.googleapis.com/auth/youtube.readonly',
-		/* `offline` access_type ensures Google returns a refresh_token. */
 		access_type: 'offline',
-		/* `consent` prompt forces re-consent every time so we always get a fresh refresh_token. */
 		prompt: 'consent'
 	});
 
-	return `${GOOGLE_AUTH_URL}?${params.toString()}`;
+	const url = `${GOOGLE_AUTH_URL}?${params.toString()}`;
+	console.log('[AUTH] Google OAuth URL built successfully');
+	return url;
 }
 
 /**
@@ -64,6 +74,9 @@ export function getGoogleAuthUrl(): string {
 export async function exchangeCode(
 	code: string
 ): Promise<{ access_token: string; refresh_token: string; expires_in: number }> {
+	const redirectUri = `${PUBLIC_APP_URL()}/api/auth/callback`;
+	console.log('[AUTH] Exchanging authorization code, redirect_uri:', redirectUri);
+
 	const res = await fetch(GOOGLE_TOKEN_URL, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -71,13 +84,14 @@ export async function exchangeCode(
 			code,
 			client_id: GOOGLE_CLIENT_ID(),
 			client_secret: GOOGLE_CLIENT_SECRET(),
-			redirect_uri: `${PUBLIC_APP_URL()}/api/auth/callback`,
+			redirect_uri: redirectUri,
 			grant_type: 'authorization_code'
 		})
 	});
 
 	if (!res.ok) {
 		const errorBody = await res.text();
+		console.error('[AUTH] Token exchange FAILED, status:', res.status, 'body:', errorBody);
 		throw new Error(`Token exchange failed: ${res.status} ${errorBody}`);
 	}
 
@@ -86,6 +100,15 @@ export async function exchangeCode(
 		refresh_token: string;
 		expires_in: number;
 	};
+
+	console.log(
+		'[AUTH] Token exchange SUCCESS, has_access_token:',
+		!!data.access_token,
+		'has_refresh_token:',
+		!!data.refresh_token,
+		'expires_in:',
+		data.expires_in
+	);
 
 	return {
 		access_token: data.access_token,
@@ -107,6 +130,7 @@ export async function exchangeCode(
 export async function refreshAccessToken(
 	refreshToken: string
 ): Promise<{ access_token: string; expires_in: number }> {
+	console.log('[AUTH] Refreshing access token...');
 	const res = await fetch(GOOGLE_TOKEN_URL, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -120,6 +144,7 @@ export async function refreshAccessToken(
 
 	if (!res.ok) {
 		const errorBody = await res.text();
+		console.error('[AUTH] Token refresh FAILED, status:', res.status, 'body:', errorBody);
 		throw new Error(`Token refresh failed: ${res.status} ${errorBody}`);
 	}
 
@@ -128,6 +153,7 @@ export async function refreshAccessToken(
 		expires_in: number;
 	};
 
+	console.log('[AUTH] Token refresh SUCCESS, expires_in:', data.expires_in);
 	return {
 		access_token: data.access_token,
 		expires_in: data.expires_in
@@ -149,15 +175,18 @@ export async function refreshAccessToken(
  * @returns A cookie-safe string in the format `payload.signature`.
  */
 export function encryptSession(session: UserSession): string {
+	console.log(
+		'[AUTH] Encrypting session, has accessToken:',
+		!!session.accessToken,
+		'has refreshToken:',
+		!!session.refreshToken
+	);
 	const payload = JSON.stringify(session);
-	/*
-	 * base64url encoding is used (instead of standard base64) because it
-	 * produces only URL/cookie-safe characters: [A-Za-z0-9_-] with no
-	 * padding `=` characters, avoiding issues in Set-Cookie headers.
-	 */
 	const encoded = Buffer.from(payload, 'utf-8').toString('base64url');
 	const signature = signHmac(encoded);
-	return `${encoded}.${signature}`;
+	const result = `${encoded}.${signature}`;
+	console.log('[AUTH] Session encrypted, cookie length:', result.length, 'chars');
+	return result;
 }
 
 /**
@@ -171,28 +200,46 @@ export function encryptSession(session: UserSession): string {
  */
 export function decryptSession(cookie: string): UserSession | null {
 	try {
-		/* Split on the last dot to separate payload from signature. */
+		console.log('[AUTH] Decrypting session cookie, length:', cookie.length);
 		const dotIndex = cookie.lastIndexOf('.');
-		if (dotIndex === -1) return null;
+		if (dotIndex === -1) {
+			console.warn('[AUTH] Session cookie has no dot separator — invalid format');
+			return null;
+		}
 
 		const encoded = cookie.slice(0, dotIndex);
 		const signature = cookie.slice(dotIndex + 1);
 
-		/* Constant-time comparison would be ideal, but HMAC re-computation
-		 * already makes timing attacks impractical here. */
 		const expectedSignature = signHmac(encoded);
-		if (signature !== expectedSignature) return null;
+		if (signature !== expectedSignature) {
+			console.warn(
+				'[AUTH] Session cookie HMAC signature mismatch — cookie was tampered or AUTH_SECRET changed'
+			);
+			return null;
+		}
 
 		const payload = Buffer.from(encoded, 'base64url').toString('utf-8');
 		const session = JSON.parse(payload) as UserSession;
 
-		/* Structural validation: ensure the session has the minimum required fields. */
 		if (!session.accessToken || !session.refreshToken || !session.expiresAt) {
+			console.warn(
+				'[AUTH] Session cookie structural validation FAILED — missing fields. accessToken:',
+				!!session.accessToken,
+				'refreshToken:',
+				!!session.refreshToken,
+				'expiresAt:',
+				!!session.expiresAt
+			);
 			return null;
 		}
 
+		console.log(
+			'[AUTH] Session decrypted successfully, token ends: ...',
+			session.accessToken.slice(-6)
+		);
 		return session;
-	} catch {
+	} catch (err) {
+		console.error('[AUTH] Session decryption threw error:', err);
 		return null;
 	}
 }

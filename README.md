@@ -2,6 +2,8 @@
 
 **YouTube without Shorts.** Two tools, one mission: completely erase YouTube Shorts from your experience.
 
+Check it out at: [youtube.prabhas.io](https://youtube.prabhas.io)
+
 ## Projects
 
 ### [PWA App](/) (root)

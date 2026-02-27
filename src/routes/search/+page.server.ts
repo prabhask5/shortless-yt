@@ -20,23 +20,47 @@ export const load: PageServerLoad = async ({ url }) => {
 	const type = (url.searchParams.get('type') as 'video' | 'channel' | 'playlist') || 'video';
 	const pageToken = url.searchParams.get('pageToken') ?? undefined;
 
+	console.log(
+		'[SEARCH PAGE] Loading search, query:',
+		query,
+		'type:',
+		type,
+		'pageToken:',
+		pageToken
+	);
+
 	if (!query) {
+		console.log('[SEARCH PAGE] No query — returning empty results');
 		return { query: '', type, results: [], nextPageToken: undefined };
 	}
 
-	if (type === 'channel') {
-		const result = await searchChannels(query, pageToken);
-		return { query, type, results: result.items, nextPageToken: result.pageInfo.nextPageToken };
-	}
+	try {
+		if (type === 'channel') {
+			console.log('[SEARCH PAGE] Searching channels for:', query);
+			const result = await searchChannels(query, pageToken);
+			console.log('[SEARCH PAGE] Channel search returned', result.items.length, 'results');
+			return { query, type, results: result.items, nextPageToken: result.pageInfo.nextPageToken };
+		}
 
-	if (type === 'playlist') {
-		const result = await searchPlaylists(query, pageToken);
-		return { query, type, results: result.items, nextPageToken: result.pageInfo.nextPageToken };
-	}
+		if (type === 'playlist') {
+			console.log('[SEARCH PAGE] Searching playlists for:', query);
+			const result = await searchPlaylists(query, pageToken);
+			console.log('[SEARCH PAGE] Playlist search returned', result.items.length, 'results');
+			return { query, type, results: result.items, nextPageToken: result.pageInfo.nextPageToken };
+		}
 
-	/* Video search: request 'medium' duration to pre-filter Shorts at the API level,
-	 * then run the secondary filterOutShorts pass for completeness. */
-	const result = await searchVideos(query, { pageToken, videoDuration: 'medium' });
-	const filtered = await filterOutShorts(result.items);
-	return { query, type, results: filtered, nextPageToken: result.pageInfo.nextPageToken };
+		console.log('[SEARCH PAGE] Searching videos for:', query);
+		const result = await searchVideos(query, { pageToken, videoDuration: 'medium' });
+		console.log(
+			'[SEARCH PAGE] Video search returned',
+			result.items.length,
+			'results before shorts filter'
+		);
+		const filtered = await filterOutShorts(result.items);
+		console.log('[SEARCH PAGE] After shorts filter:', filtered.length, 'videos remain');
+		return { query, type, results: filtered, nextPageToken: result.pageInfo.nextPageToken };
+	} catch (err) {
+		console.error('[SEARCH PAGE] Search FAILED for query:', query, 'type:', type, 'error:', err);
+		return { query, type, results: [], nextPageToken: undefined };
+	}
 };
