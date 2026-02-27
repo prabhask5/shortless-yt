@@ -956,6 +956,56 @@ export async function getUserPlaylists(
 	return result;
 }
 
+/**
+ * Fetch the authenticated user's own YouTube channel profile (avatar, title).
+ *
+ * Uses the `channels` endpoint with `mine=true` to get the channel belonging
+ * to the currently authenticated user.
+ *
+ * @param accessToken - The user's OAuth2 access token.
+ * @returns Object with `avatarUrl` and `channelTitle`, or null if not found.
+ */
+export async function getUserProfile(
+	accessToken: string
+): Promise<{ avatarUrl: string; channelTitle: string } | null> {
+	const cacheKey = `user:profile:${accessToken.slice(-8)}`;
+	const cached = userCache.get<{ avatarUrl: string; channelTitle: string }>(cacheKey);
+	if (cached) {
+		console.log(`[YOUTUBE] getUserProfile CACHE HIT`);
+		return cached;
+	}
+	console.log('[YOUTUBE] getUserProfile CACHE MISS, fetching from API...');
+
+	try {
+		const data = (await youtubeApiFetch(
+			'channels',
+			{ part: 'snippet', mine: 'true' },
+			accessToken
+		)) as Record<string, unknown>;
+
+		const items = (data.items as Record<string, unknown>[]) ?? [];
+		if (items.length === 0) {
+			console.warn('[YOUTUBE] getUserProfile returned no channels');
+			return null;
+		}
+
+		const snippet = items[0].snippet as Record<string, unknown> | undefined;
+		const thumbnails = snippet?.thumbnails as Record<string, Record<string, unknown>> | undefined;
+
+		const profile = {
+			avatarUrl: (thumbnails?.default?.url as string) ?? '',
+			channelTitle: (snippet?.title as string) ?? ''
+		};
+
+		console.log('[YOUTUBE] getUserProfile SUCCESS:', profile.channelTitle);
+		userCache.set(cacheKey, profile, FIVE_MINUTES);
+		return profile;
+	} catch (err) {
+		console.error('[YOUTUBE] getUserProfile FAILED:', err);
+		return null;
+	}
+}
+
 // ===================================================================
 // Autocomplete
 // ===================================================================

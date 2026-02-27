@@ -33,7 +33,19 @@
 	let mobileSearchOpen = $state(false);
 	/** Whether the user avatar dropdown menu is visible */
 	let userMenuOpen = $state(false);
+
+	/** Close the user menu when clicking anywhere outside it */
+	function handleWindowClick(e: MouseEvent) {
+		if (userMenuOpen) {
+			const target = e.target as HTMLElement;
+			if (!target.closest('[data-user-menu]')) {
+				userMenuOpen = false;
+			}
+		}
+	}
 </script>
+
+<svelte:window onclick={handleWindowClick} />
 
 <header
 	class="border-yt-border bg-yt-bg sticky top-0 z-50 flex h-14 items-center gap-2 border-b px-4"
@@ -85,13 +97,25 @@
 
 			<!-- User section: avatar dropdown when signed in, "Sign in" button when not -->
 			{#if user}
-				<div class="relative">
+				<div class="relative" data-user-menu>
 					<button
 						onclick={() => (userMenuOpen = !userMenuOpen)}
 						class="ml-1 h-8 w-8 overflow-hidden rounded-full"
 						aria-label="User menu"
 					>
-						<img src={user.avatarUrl} alt={user.channelTitle} class="h-full w-full object-cover" />
+						{#if user.avatarUrl}
+							<img
+								src={user.avatarUrl}
+								alt={user.channelTitle}
+								class="h-full w-full object-cover"
+							/>
+						{:else}
+							<svg class="text-yt-text h-full w-full" fill="currentColor" viewBox="0 0 24 24">
+								<path
+									d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"
+								/>
+							</svg>
+						{/if}
 					</button>
 
 					{#if userMenuOpen}
