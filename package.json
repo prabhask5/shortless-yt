@@ -1,14 +1,39 @@
 {
-  "name": "shortless-youtube",
-  "version": "1.0.0",
-  "description": "Remove all traces of YouTube Shorts from the YouTube website",
-  "type": "module",
-  "scripts": {
-    "build": "node build.js",
-    "build:firefox": "node build.js firefox",
-    "build:chrome": "node build.js chrome",
-    "clean": "rm -rf dist-firefox dist-chrome",
-    "package": "npm run build && cd dist-firefox && zip -r ../shortless-youtube-firefox.zip . && cd ../dist-chrome && zip -r ../shortless-youtube-chrome.zip . && cd ..",
-    "release": "node release.js"
-  }
+	"name": "shortless-yt",
+	"private": true,
+	"version": "1.0.0",
+	"type": "module",
+	"scripts": {
+		"dev": "vite dev",
+		"build": "vite build",
+		"preview": "vite preview",
+		"prepare": "svelte-kit sync || echo ''",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"validate": "npm run check && eslint . && knip",
+		"cleanup": "prettier --write ."
+	},
+	"devDependencies": {
+		"@eslint/js": "^10.0.1",
+		"@sveltejs/adapter-vercel": "^6.3.3",
+		"@sveltejs/kit": "^2.53.3",
+		"@sveltejs/vite-plugin-svelte": "^6.2.4",
+		"@tailwindcss/vite": "^4.2.1",
+		"@vite-pwa/sveltekit": "^1.1.0",
+		"eslint": "^10.0.2",
+		"eslint-plugin-svelte": "^3.15.0",
+		"globals": "^17.3.0",
+		"knip": "^5.85.0",
+		"prettier": "^3.8.1",
+		"prettier-plugin-svelte": "^3.5.0",
+		"prettier-plugin-tailwindcss": "^0.7.2",
+		"svelte": "^5.53.5",
+		"svelte-check": "^4.4.4",
+		"tailwindcss": "^4.2.1",
+		"typescript": "^5.9.3",
+		"typescript-eslint": "^8.56.1",
+		"vite": "^7.3.1"
+	},
+	"dependencies": {
+		"@tanstack/svelte-virtual": "^3.13.19"
+	}
 }

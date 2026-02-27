@@ -1,0 +1,42 @@
+@import 'tailwindcss';
+
+@theme {
+	--color-yt-bg: #0f0f0f;
+	--color-yt-surface: #272727;
+	--color-yt-surface-hover: #3f3f3f;
+	--color-yt-text: #f1f1f1;
+	--color-yt-text-secondary: #aaaaaa;
+	--color-yt-accent: #ff0000;
+	--color-yt-accent-hover: #cc0000;
+	--color-yt-border: #3f3f3f;
+
+	--color-light-bg: #ffffff;
+	--color-light-surface: #f2f2f2;
+	--color-light-surface-hover: #e5e5e5;
+	--color-light-text: #0f0f0f;
+	--color-light-text-secondary: #606060;
+	--color-light-border: #e5e5e5;
+}
+
+html {
+	font-family:
+		'Roboto',
+		-apple-system,
+		BlinkMacSystemFont,
+		'Segoe UI',
+		Oxygen,
+		Ubuntu,
+		sans-serif;
+}
+
+html.dark {
+	color-scheme: dark;
+	background-color: var(--color-yt-bg);
+	color: var(--color-yt-text);
+}
+
+html.light {
+	color-scheme: light;
+	background-color: var(--color-light-bg);
+	color: var(--color-light-text);
+}

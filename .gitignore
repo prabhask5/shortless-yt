@@ -1,5 +1,16 @@
 node_modules/
-dist-chrome/
-dist-firefox/
-*.zip
+.svelte-kit/
+build/
+.vercel/
+.env
+.env.*
+!.env.example
 .DS_Store
+vite.config.ts.timestamp-*
+
+# Extension build artifacts
+extension/node_modules/
+extension/dist-chrome/
+extension/dist-firefox/
+extension/compiled/
+extension/*.zip
