@@ -25,6 +25,15 @@
 	let suggestions = $state<string[]>([]);
 	/** Whether the autocomplete dropdown is visible */
 	let showDropdown = $state(false);
+
+	/** Clear suggestions and dropdown when initialQuery changes (e.g. navigating away from search) */
+	$effect(() => {
+		// Access initialQuery to track it
+		void initialQuery;
+		suggestions = [];
+		showDropdown = false;
+		selectedIndex = -1;
+	});
 	/** Currently highlighted suggestion index; -1 means none selected (keyboard nav) */
 	let selectedIndex = $state(-1);
 	/** Reference to the <input> DOM element for programmatic focus */
@@ -112,7 +121,12 @@
 	 */
 	function doSearch() {
 		if (query.trim()) {
+			/* Kill any pending debounce so stale suggestions don't flash after navigation */
+			if (debounceTimer) clearTimeout(debounceTimer);
+			suggestions = [];
 			showDropdown = false;
+			selectedIndex = -1;
+			inputEl?.blur();
 			goto(`/search?q=${encodeURIComponent(query.trim())}`);
 		}
 	}

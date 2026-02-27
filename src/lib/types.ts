@@ -54,6 +54,12 @@ export interface ChannelItem {
 	subscriberCount: string;
 	/** Total number of public videos as a numeric string. */
 	videoCount: string;
+	/** Total channel view count as a numeric string. */
+	viewCount?: string;
+	/** ISO 8601 timestamp of when the channel was created. */
+	publishedAt?: string;
+	/** Channel banner image URL from brandingSettings (may be empty). */
+	bannerUrl?: string;
 }
 
 /**

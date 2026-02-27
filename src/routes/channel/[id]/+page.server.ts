@@ -1,21 +1,25 @@
 /**
- * @fileoverview Channel page server load — two-step fetch for channel profile and videos.
+ * @fileoverview Channel page server load — fetches channel profile, videos, and subscription status.
  *
- * Step 1: Fetch channel details (title, avatar, subscriber count, etc.) and
- *         validate that the channel exists (404 if not).
- * Step 2: Fetch the channel's uploaded videos and filter out Shorts.
+ * Step 1: Fetch channel details and validate existence (404 if not found).
+ * Step 2: Fetch videos and subscription status in parallel.
  *
- * These steps are sequential (not parallel) because we want to 404 early if
- * the channel does not exist, avoiding a wasted videos API call.
+ * Supports sort order via `sort` query param: 'recent' (default), 'oldest', 'popular'.
  */
 import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
-import { getChannelDetails, getChannelVideos } from '$lib/server/youtube';
+import {
+	getChannelDetails,
+	getChannelVideos,
+	checkSubscription,
+	searchVideos
+} from '$lib/server/youtube';
 import { filterOutShorts, filterOutBrokenVideos } from '$lib/server/shorts';
 
-export const load: PageServerLoad = async ({ params }) => {
+export const load: PageServerLoad = async ({ params, locals, url }) => {
 	const channelId = params.id;
-	console.log('[CHANNEL PAGE] Loading channel page, channelId:', channelId);
+	const sort = (url.searchParams.get('sort') as 'recent' | 'oldest' | 'popular') ?? 'recent';
+	console.log('[CHANNEL PAGE] Loading channel page, channelId:', channelId, 'sort:', sort);
 
 	console.log('[CHANNEL PAGE] Step 1: Fetching channel details');
 	let channels;
@@ -34,23 +38,51 @@ export const load: PageServerLoad = async ({ params }) => {
 	const channel = channels[0];
 	console.log('[CHANNEL PAGE] Step 1 complete — channel:', channel.title);
 
-	console.log('[CHANNEL PAGE] Step 2: Fetching channel videos');
-	let videosResult;
-	try {
-		videosResult = await getChannelVideos(channelId);
-	} catch (err) {
-		console.error('[CHANNEL PAGE] getChannelVideos FAILED for', channelId, ':', err);
-		videosResult = { items: [], pageInfo: { totalResults: 0 } };
+	// Step 2: Fetch videos and subscription status in parallel
+	console.log('[CHANNEL PAGE] Step 2: Fetching videos + subscription status in parallel');
+
+	// Choose video fetch strategy based on sort order
+	const videoFetch =
+		sort === 'popular'
+			? searchVideos(channel.title, { order: 'viewCount' }).then((r) => ({
+					items: r.items.filter((v) => v.channelId === channelId),
+					pageInfo: r.pageInfo
+				}))
+			: getChannelVideos(channelId);
+
+	const [videosResult, isSubscribed] = await Promise.all([
+		videoFetch.catch((err) => {
+			console.error('[CHANNEL PAGE] video fetch FAILED for', channelId, ':', err);
+			return { items: [] as import('$lib/types').VideoItem[], pageInfo: { totalResults: 0 } };
+		}),
+		locals.session
+			? checkSubscription(locals.session.accessToken, channelId).catch(() => false)
+			: Promise.resolve(false)
+	]);
+
+	console.log(
+		'[CHANNEL PAGE] Videos fetched:',
+		videosResult.items.length,
+		'subscribed:',
+		isSubscribed
+	);
+
+	let filteredVideos = filterOutBrokenVideos(videosResult.items);
+	filteredVideos = await filterOutShorts(filteredVideos);
+
+	// For oldest sort, reverse the results (uploads playlist returns newest first)
+	if (sort === 'oldest') {
+		filteredVideos = filteredVideos.reverse();
 	}
 
-	console.log('[CHANNEL PAGE] Channel videos fetched:', videosResult.items.length);
-	const cleanVideos = filterOutBrokenVideos(videosResult.items);
-	const filteredVideos = await filterOutShorts(cleanVideos);
-	console.log('[CHANNEL PAGE] After shorts filter:', filteredVideos.length, 'videos remain');
+	console.log('[CHANNEL PAGE] After filtering:', filteredVideos.length, 'videos remain');
 
 	return {
 		channel,
 		videos: filteredVideos,
-		nextPageToken: videosResult.pageInfo.nextPageToken
+		isSubscribed,
+		sort,
+		nextPageToken:
+			'nextPageToken' in videosResult.pageInfo ? videosResult.pageInfo.nextPageToken : undefined
 	};
 };

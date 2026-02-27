@@ -143,6 +143,8 @@ function parseChannelItem(item: Record<string, unknown>): ChannelItem {
 	const snippet = item.snippet as Record<string, unknown> | undefined;
 	const statistics = item.statistics as Record<string, unknown> | undefined;
 	const thumbnails = snippet?.thumbnails as Record<string, Record<string, unknown>> | undefined;
+	const branding = item.brandingSettings as Record<string, unknown> | undefined;
+	const brandingImage = branding?.image as Record<string, unknown> | undefined;
 
 	return {
 		id:
@@ -153,7 +155,10 @@ function parseChannelItem(item: Record<string, unknown>): ChannelItem {
 		description: (snippet?.description as string) ?? '',
 		thumbnailUrl: (thumbnails?.medium?.url as string) ?? (thumbnails?.default?.url as string) ?? '',
 		subscriberCount: (statistics?.subscriberCount as string) ?? '0',
-		videoCount: (statistics?.videoCount as string) ?? '0'
+		videoCount: (statistics?.videoCount as string) ?? '0',
+		viewCount: (statistics?.viewCount as string) ?? undefined,
+		publishedAt: (snippet?.publishedAt as string) ?? undefined,
+		bannerUrl: (brandingImage?.bannerExternalUrl as string) ?? ''
 	};
 }
 
@@ -436,9 +441,9 @@ export async function searchMixed(
 
 	// Separate items by type and collect IDs for detail fetches
 	const videoIds: string[] = [];
+	const channelIds: string[] = [];
+	const playlistIds: string[] = [];
 	const itemOrder: Array<{ type: 'video' | 'channel' | 'playlist'; index: number }> = [];
-	const snippetChannels: ChannelItem[] = [];
-	const snippetPlaylists: PlaylistItem[] = [];
 
 	for (const raw of rawItems) {
 		const idObj = raw.id as Record<string, string> | undefined;
@@ -448,22 +453,31 @@ export async function searchMixed(
 			itemOrder.push({ type: 'video', index: videoIds.length });
 			videoIds.push(idObj.videoId);
 		} else if (kind === 'youtube#channel' && idObj?.channelId) {
-			itemOrder.push({ type: 'channel', index: snippetChannels.length });
-			snippetChannels.push(parseChannelItem(raw));
+			itemOrder.push({ type: 'channel', index: channelIds.length });
+			channelIds.push(idObj.channelId);
 		} else if (kind === 'youtube#playlist' && idObj?.playlistId) {
-			itemOrder.push({ type: 'playlist', index: snippetPlaylists.length });
-			snippetPlaylists.push(parsePlaylistItem(raw));
+			itemOrder.push({ type: 'playlist', index: playlistIds.length });
+			playlistIds.push(idObj.playlistId);
 		}
 	}
 
-	// Hydrate video details (duration, stats)
-	const videoDetails = videoIds.length > 0 ? await getVideoDetails(videoIds) : [];
-	// Build a lookup map since getVideoDetails may reorder
+	// Hydrate video, channel, and playlist details in parallel (search only returns snippets)
+	const [videoDetails, channelDetails, playlistDetails] = await Promise.all([
+		videoIds.length > 0 ? getVideoDetails(videoIds) : Promise.resolve([]),
+		channelIds.length > 0 ? getChannelDetails(channelIds) : Promise.resolve([]),
+		playlistIds.length > 0 ? getPlaylistDetails(playlistIds) : Promise.resolve([])
+	]);
+
+	// Build lookup maps since detail fetches may reorder results
 	const videoMap = new Map<string, VideoItem>();
 	for (const v of videoDetails) videoMap.set(v.id, v);
+	const channelMap = new Map<string, ChannelItem>();
+	for (const c of channelDetails) channelMap.set(c.id, c);
+	const playlistMap = new Map<string, PlaylistItem>();
+	for (const p of playlistDetails) playlistMap.set(p.id, p);
 
 	console.log(
-		`[YOUTUBE] searchMixed detail fetch — ${videoDetails.length} videos, ${snippetChannels.length} channels, ${snippetPlaylists.length} playlists`
+		`[YOUTUBE] searchMixed detail fetch — ${videoDetails.length} videos, ${channelDetails.length} channels, ${playlistDetails.length} playlists`
 	);
 
 	// Reconstruct results in YouTube's original order
@@ -478,9 +492,11 @@ export async function searchMixed(
 			const video = videoMap.get(videoIds[entry.index]);
 			if (video) results.push({ type: 'video', item: video });
 		} else if (entry.type === 'channel') {
-			results.push({ type: 'channel', item: snippetChannels[entry.index] });
+			const channel = channelMap.get(channelIds[entry.index]);
+			if (channel) results.push({ type: 'channel', item: channel });
 		} else {
-			results.push({ type: 'playlist', item: snippetPlaylists[entry.index] });
+			const playlist = playlistMap.get(playlistIds[entry.index]);
+			if (playlist) results.push({ type: 'playlist', item: playlist });
 		}
 	}
 
@@ -604,6 +620,57 @@ export async function getChannelDetails(ids: string[]): Promise<ChannelItem[]> {
 	}
 
 	console.log(`[YOUTUBE] getChannelDetails total: ${results.length} channels`);
+	return results;
+}
+
+/**
+ * Batch-fetch full playlist details (including itemCount from contentDetails).
+ *
+ * Search results only return snippet data for playlists, missing contentDetails.
+ * This hydrates them with the full playlists endpoint.
+ *
+ * @param ids - Array of YouTube playlist IDs to look up.
+ * @returns Array of fully-hydrated playlist items.
+ */
+export async function getPlaylistDetails(ids: string[]): Promise<PlaylistItem[]> {
+	console.log(`[YOUTUBE] getPlaylistDetails called with ${ids.length} IDs`);
+	const results: PlaylistItem[] = [];
+	const uncachedIds: string[] = [];
+
+	for (const id of ids) {
+		const cached = publicCache.get<PlaylistItem>(`playlist:${id}`);
+		if (cached) {
+			results.push(cached);
+		} else {
+			uncachedIds.push(id);
+		}
+	}
+
+	if (uncachedIds.length > 0) {
+		console.log(
+			`[YOUTUBE] getPlaylistDetails — ${results.length} cache hits, ${uncachedIds.length} need fetching`
+		);
+	}
+
+	for (let i = 0; i < uncachedIds.length; i += 50) {
+		const batch = uncachedIds.slice(i, i + 50);
+		const data = (await youtubeApiFetch('playlists', {
+			part: 'snippet,contentDetails',
+			id: batch.join(','),
+			maxResults: '50'
+		})) as Record<string, unknown>;
+
+		const items = (data.items as Record<string, unknown>[]) ?? [];
+		const playlists = items.map(parsePlaylistItem);
+		console.log(`[YOUTUBE] getPlaylistDetails batch returned ${playlists.length} playlists`);
+
+		for (const pl of playlists) {
+			publicCache.set(`playlist:${pl.id}`, pl, FIFTEEN_MINUTES);
+		}
+		results.push(...playlists);
+	}
+
+	console.log(`[YOUTUBE] getPlaylistDetails total: ${results.length} playlists`);
 	return results;
 }
 
@@ -1047,6 +1114,47 @@ export async function getSubscriptions(
 
 	userCache.set(cacheKey, result, FIVE_MINUTES);
 	return result;
+}
+
+/**
+ * Check if the authenticated user is subscribed to a specific channel.
+ *
+ * Uses the `subscriptions` endpoint with `forChannelId` to check if a
+ * subscription exists. Returns true if the user is subscribed.
+ *
+ * @param accessToken - The user's OAuth2 access token.
+ * @param channelId   - The channel ID to check subscription status for.
+ * @returns Whether the user is subscribed to the channel.
+ */
+export async function checkSubscription(accessToken: string, channelId: string): Promise<boolean> {
+	const cacheKey = `user:sub:${accessToken.slice(-8)}:${channelId}`;
+	const cached = userCache.get<boolean>(cacheKey);
+	if (cached !== undefined) {
+		console.log(`[YOUTUBE] checkSubscription CACHE HIT for ${channelId}: ${cached}`);
+		return cached;
+	}
+	console.log(`[YOUTUBE] checkSubscription CACHE MISS for ${channelId}, fetching...`);
+
+	try {
+		const data = (await youtubeApiFetch(
+			'subscriptions',
+			{
+				part: 'id',
+				mine: 'true',
+				forChannelId: channelId
+			},
+			accessToken
+		)) as Record<string, unknown>;
+
+		const items = (data.items as unknown[]) ?? [];
+		const isSubscribed = items.length > 0;
+		console.log(`[YOUTUBE] checkSubscription for ${channelId}: ${isSubscribed}`);
+		userCache.set(cacheKey, isSubscribed, FIVE_MINUTES);
+		return isSubscribed;
+	} catch (err) {
+		console.warn(`[YOUTUBE] checkSubscription FAILED for ${channelId}:`, err);
+		return false;
+	}
 }
 
 /**

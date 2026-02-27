@@ -2,9 +2,8 @@
 	@component Search Results Page
 
 	Displays search results with multi-select type filter chips (Videos / Channels / Playlists).
-	By default all types are selected. Toggling chips filters the results.
-	Results from all selected types are rendered together in a unified list,
-	each using its appropriate card component.
+	All types are always fetched from the server in one API call; chips filter client-side
+	for instant toggling without server round-trips.
 -->
 <script lang="ts">
 	import VideoCard from '$lib/components/VideoCard.svelte';
@@ -12,7 +11,6 @@
 	import PlaylistCard from '$lib/components/PlaylistCard.svelte';
 	import VirtualFeed from '$lib/components/VirtualFeed.svelte';
 	import FilterChips from '$lib/components/FilterChips.svelte';
-	import { goto } from '$app/navigation';
 	import type { PageData } from './$types';
 	import type { SearchResult } from './+page.server';
 
@@ -24,10 +22,16 @@
 		{ label: 'Playlists', value: 'playlist' }
 	];
 
+	/** Selected types for client-side filtering — all selected by default */
+	let selectedTypes = $state<string[]>(['video', 'channel', 'playlist']);
+
+	/** Client-side filtered results based on selected chips */
+	let filteredResults = $derived(
+		(data.results as SearchResult[]).filter((r) => selectedTypes.includes(r.type))
+	);
+
 	function handleTypeChange(types: string | string[]) {
-		const typesArray = Array.isArray(types) ? types : [types];
-		const q = data.query ? `q=${encodeURIComponent(data.query)}&` : '';
-		goto(`/search?${q}types=${encodeURIComponent(typesArray.join(','))}`);
+		selectedTypes = Array.isArray(types) ? types : [types];
 	}
 </script>
 
@@ -38,23 +42,18 @@
 <div class="mx-auto max-w-screen-xl px-4 py-4">
 	<FilterChips
 		filters={typeFilters}
-		selected={data.types}
+		selected={selectedTypes}
 		onChange={handleTypeChange}
 		multiSelect={true}
 	/>
 
 	{#if !data.query}
 		<p class="text-yt-text-secondary mt-8 text-center">Search for videos, channels, or playlists</p>
-	{:else if data.results.length === 0}
+	{:else if filteredResults.length === 0}
 		<p class="text-yt-text-secondary mt-8 text-center">No results found for "{data.query}"</p>
 	{:else}
 		<div class="mt-4">
-			<VirtualFeed
-				items={data.results as SearchResult[]}
-				columns={1}
-				estimateRowHeight={100}
-				gap={8}
-			>
+			<VirtualFeed items={filteredResults} columns={1} estimateRowHeight={100} gap={8}>
 				{#snippet children(result)}
 					{#if result.type === 'video'}
 						<VideoCard video={result.item} layout="horizontal" />
