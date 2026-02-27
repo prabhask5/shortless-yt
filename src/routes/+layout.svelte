@@ -12,6 +12,7 @@
 	- Extracts the current search query `q` from the URL so the Header search
 	  bar stays in sync when navigating between pages.
 	- Shows a prominent banner when the YouTube API daily quota is exhausted.
+	- Shows a YouTube-style loading bar during navigation.
 -->
 <script lang="ts">
 	import '../app.css';
@@ -19,6 +20,7 @@
 	import ReloadPrompt from '$lib/components/ReloadPrompt.svelte';
 	import { authState } from '$lib/stores/auth';
 	import { page } from '$app/stores';
+	import { navigating } from '$app/stores';
 
 	let { children } = $props();
 
@@ -27,6 +29,9 @@
 
 	// Quota exhaustion state from layout server load
 	let quotaExhausted = $derived(!!$page.data.quotaExhausted);
+
+	// Navigation loading state
+	let isNavigating = $derived(!!$navigating);
 
 	/* Sync server auth state to the client-side store on every navigation.
 	 * The layout server load provides `data.user` (or null), and this effect
@@ -44,6 +49,15 @@
 		}
 	});
 </script>
+
+<!-- Navigation loading bar — YouTube-style red progress bar at the top of the viewport -->
+{#if isNavigating}
+	<div class="fixed top-0 right-0 left-0 z-[100] h-1">
+		<div
+			class="bg-yt-accent h-full animate-[loading_1.5s_ease-in-out_infinite] rounded-r-full"
+		></div>
+	</div>
+{/if}
 
 <!-- App shell: full-height flex column with sticky header and stretchy main -->
 <div class="bg-yt-bg text-yt-text flex min-h-screen flex-col">
@@ -64,3 +78,17 @@
 	</main>
 	<ReloadPrompt />
 </div>
+
+<style>
+	@keyframes loading {
+		0% {
+			width: 0%;
+		}
+		50% {
+			width: 70%;
+		}
+		100% {
+			width: 95%;
+		}
+	}
+</style>

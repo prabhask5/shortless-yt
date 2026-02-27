@@ -1,9 +1,8 @@
 <!--
 	@component Channel Page
 
-	Displays a channel's banner, profile (avatar, title, subscriber/video counts),
-	subscription status, sort chips, and a responsive video grid of uploads.
-	Includes an expandable "About" modal for full description, view count, and join date.
+	Displays a channel's banner and profile immediately (blocking data),
+	then streams in videos and subscription status with skeleton placeholders.
 -->
 <script lang="ts">
 	import VideoCard from '$lib/components/VideoCard.svelte';
@@ -31,7 +30,6 @@
 		return () => window.removeEventListener('resize', updateColumns);
 	});
 
-	/** Lock body scroll when modal is open */
 	$effect(() => {
 		if (showAboutModal) {
 			document.body.style.overflow = 'hidden';
@@ -87,7 +85,7 @@
 </svelte:head>
 
 <div class="mx-auto max-w-screen-2xl">
-	<!-- Channel banner -->
+	<!-- Channel banner (blocking data — renders immediately) -->
 	{#if data.channel.bannerUrl}
 		<div class="aspect-[6.2/1] w-full overflow-hidden">
 			<img
@@ -100,7 +98,7 @@
 		<div class="bg-yt-surface aspect-[6.2/1] w-full"></div>
 	{/if}
 
-	<!-- Channel profile header — stacks vertically on mobile, horizontal on sm+ -->
+	<!-- Channel profile header -->
 	<div class="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:gap-6 sm:py-6">
 		<img
 			src={data.channel.thumbnailUrl}
@@ -128,16 +126,19 @@
 					</button>
 				</div>
 			{/if}
-			{#if data.isSubscribed}
-				<span
-					class="bg-yt-surface text-yt-text-secondary mt-2 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium"
-				>
-					<svg class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
-						<path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
-					</svg>
-					Subscribed
-				</span>
-			{/if}
+			<!-- Subscription badge streams in -->
+			{#await data.streamed.channelData then channelData}
+				{#if channelData.isSubscribed}
+					<span
+						class="bg-yt-surface text-yt-text-secondary mt-2 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium"
+					>
+						<svg class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+							<path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+						</svg>
+						Subscribed
+					</span>
+				{/if}
+			{/await}
 		</div>
 	</div>
 
@@ -148,24 +149,31 @@
 		</div>
 		<FilterChips filters={sortFilters} selected={data.sort} onChange={handleSortChange} />
 		<div class="mt-3 sm:mt-4">
-			{#if data.videos.length > 0}
-				<VirtualFeed
-					items={data.videos}
-					{columns}
-					estimateRowHeight={columns === 1 ? 300 : 280}
-					gap={16}
-				>
-					{#snippet children(video)}
-						<VideoCard {video} />
-					{/snippet}
-				</VirtualFeed>
-			{:else}
+			{#await data.streamed.channelData}
+				<!-- Video grid skeletons -->
 				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
 					{#each Array(8) as _unused, i (i)}
 						<Skeleton variant="video-card" />
 					{/each}
 				</div>
-			{/if}
+			{:then channelData}
+				{#if channelData.videos.length > 0}
+					<VirtualFeed
+						items={channelData.videos}
+						{columns}
+						estimateRowHeight={columns === 1 ? 300 : 280}
+						gap={16}
+					>
+						{#snippet children(video)}
+							<VideoCard {video} />
+						{/snippet}
+					</VirtualFeed>
+				{:else}
+					<p class="text-yt-text-secondary py-8 text-center">No videos found.</p>
+				{/if}
+			{:catch}
+				<p class="text-yt-text-secondary py-8 text-center">Failed to load videos.</p>
+			{/await}
 		</div>
 	</div>
 </div>
@@ -178,19 +186,15 @@
 		aria-modal="true"
 		aria-label="About {data.channel.title}"
 	>
-		<!-- Backdrop -->
 		<button
 			class="absolute inset-0 bg-black/60"
 			onclick={() => (showAboutModal = false)}
 			aria-label="Close"
 			tabindex="-1"
 		></button>
-
-		<!-- Modal content — slides up from bottom on mobile, centered on desktop -->
 		<div
 			class="bg-yt-bg relative max-h-[85vh] w-full overflow-y-auto rounded-t-2xl p-4 sm:max-w-lg sm:rounded-2xl sm:p-6"
 		>
-			<!-- Header -->
 			<div class="mb-4 flex items-center justify-between">
 				<h2 class="text-yt-text text-lg font-bold">About</h2>
 				<button
@@ -205,8 +209,6 @@
 					</svg>
 				</button>
 			</div>
-
-			<!-- Description -->
 			{#if data.channel.description}
 				<p class="text-yt-text text-sm leading-relaxed whitespace-pre-line">
 					{data.channel.description}
@@ -214,8 +216,6 @@
 			{:else}
 				<p class="text-yt-text-secondary text-sm italic">No description available.</p>
 			{/if}
-
-			<!-- Stats -->
 			<div class="border-yt-border mt-4 border-t pt-4">
 				<h3 class="text-yt-text mb-3 text-sm font-semibold">Stats</h3>
 				<div class="space-y-2">
@@ -232,9 +232,7 @@
 							</svg>
 							<div>
 								<p class="text-yt-text-secondary text-xs">Joined</p>
-								<p class="text-yt-text text-sm">
-									{formatJoinDate(data.channel.publishedAt)}
-								</p>
+								<p class="text-yt-text text-sm">{formatJoinDate(data.channel.publishedAt)}</p>
 							</div>
 						</div>
 					{/if}
@@ -267,9 +265,7 @@
 						</svg>
 						<div>
 							<p class="text-yt-text-secondary text-xs">Subscribers</p>
-							<p class="text-yt-text text-sm">
-								{formatFullCount(data.channel.subscriberCount)}
-							</p>
+							<p class="text-yt-text text-sm">{formatFullCount(data.channel.subscriberCount)}</p>
 						</div>
 					</div>
 					<div class="flex items-center gap-3">
@@ -284,9 +280,7 @@
 						</svg>
 						<div>
 							<p class="text-yt-text-secondary text-xs">Videos</p>
-							<p class="text-yt-text text-sm">
-								{formatFullCount(data.channel.videoCount)}
-							</p>
+							<p class="text-yt-text text-sm">{formatFullCount(data.channel.videoCount)}</p>
 						</div>
 					</div>
 				</div>

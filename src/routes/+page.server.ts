@@ -2,11 +2,11 @@
  * @fileoverview Home page server load — dual strategy for authenticated vs anonymous users.
  *
  * Authenticated users see their subscription channels (horizontal bar) plus
- * trending videos. Anonymous users see category chips plus trending videos.
+ * recent videos from subscribed channels. Anonymous users see category chips
+ * plus trending videos.
  *
- * Both paths run their YouTube API calls in parallel via `Promise.all` to
- * minimize total latency. All video results pass through `filterOutShorts`
- * to strip YouTube Shorts from the feed (the core feature of this app).
+ * Uses SvelteKit streaming: returns promises so the page renders immediately
+ * with skeleton placeholders, then fills in when data arrives.
  */
 import type { PageServerLoad } from './$types';
 import type { PaginatedResult, VideoItem, ChannelItem } from '$lib/types';
@@ -23,59 +23,49 @@ const emptyChannels: PaginatedResult<ChannelItem> = {
 	pageInfo: { totalResults: 0 }
 };
 
-const emptyVideos: PaginatedResult<VideoItem> = {
-	items: [],
-	pageInfo: { totalResults: 0 }
-};
-
-export const load: PageServerLoad = async ({ locals, url }) => {
-	const categoryId = url.searchParams.get('category') || undefined;
+async function fetchAuthData(accessToken: string) {
 	console.log(
-		'[HOME PAGE] Loading home page, authenticated:',
-		!!locals.session,
-		'category:',
-		categoryId ?? 'all'
+		'[HOME PAGE] Authenticated path — fetching subscriptions + subscription feed in parallel'
+	);
+	const [subscriptions, feedVideos] = await Promise.all([
+		getSubscriptions(accessToken).catch((err) => {
+			console.error('[HOME PAGE] getSubscriptions FAILED:', err);
+			return emptyChannels;
+		}),
+		getSubscriptionFeed(accessToken).catch((err) => {
+			console.error('[HOME PAGE] getSubscriptionFeed FAILED:', err);
+			return [] as VideoItem[];
+		})
+	]);
+
+	console.log(
+		'[HOME PAGE] Auth results — subscriptions:',
+		subscriptions.items.length,
+		'feed videos:',
+		feedVideos.length
+	);
+	const cleanFeed = filterOutBrokenVideos(feedVideos);
+	const filteredFeed = await filterOutShorts(cleanFeed);
+	console.log(
+		'[HOME PAGE] After shorts filter:',
+		filteredFeed.length,
+		'videos remain (from',
+		feedVideos.length,
+		')'
 	);
 
-	if (locals.session) {
-		console.log(
-			'[HOME PAGE] Authenticated path — fetching subscriptions + subscription feed in parallel'
-		);
-		const [subscriptions, feedVideos] = await Promise.all([
-			getSubscriptions(locals.session.accessToken).catch((err) => {
-				console.error('[HOME PAGE] getSubscriptions FAILED:', err);
-				return emptyChannels;
-			}),
-			getSubscriptionFeed(locals.session.accessToken).catch((err) => {
-				console.error('[HOME PAGE] getSubscriptionFeed FAILED:', err);
-				return [] as VideoItem[];
-			})
-		]);
+	return {
+		subscriptions: subscriptions.items,
+		feed: filteredFeed
+	};
+}
 
-		console.log(
-			'[HOME PAGE] Auth results — subscriptions:',
-			subscriptions.items.length,
-			'feed videos:',
-			feedVideos.length
-		);
-		const cleanFeed = filterOutBrokenVideos(feedVideos);
-		const filteredFeed = await filterOutShorts(cleanFeed);
-		console.log(
-			'[HOME PAGE] After shorts filter:',
-			filteredFeed.length,
-			'videos remain (from',
-			feedVideos.length,
-			')'
-		);
-
-		return {
-			authenticated: true as const,
-			subscriptions: subscriptions.items,
-			feed: filteredFeed
-		};
-	}
-
+async function fetchAnonData(categoryId?: string) {
 	console.log('[HOME PAGE] Anonymous path — fetching trending + categories in parallel');
+	const emptyVideos: PaginatedResult<VideoItem> = {
+		items: [],
+		pageInfo: { totalResults: 0 }
+	};
 	const [trending, categories] = await Promise.all([
 		getTrending(categoryId).catch((err) => {
 			console.error('[HOME PAGE] getTrending FAILED (anon path):', err);
@@ -104,10 +94,35 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	);
 
 	return {
-		authenticated: false as const,
 		trending: filteredTrending,
 		categories,
-		selectedCategory: categoryId ?? '0',
 		nextPageToken: trending.pageInfo.nextPageToken
+	};
+}
+
+export const load: PageServerLoad = async ({ locals, url }) => {
+	const categoryId = url.searchParams.get('category') || undefined;
+	console.log(
+		'[HOME PAGE] Loading home page, authenticated:',
+		!!locals.session,
+		'category:',
+		categoryId ?? 'all'
+	);
+
+	if (locals.session) {
+		return {
+			authenticated: true as const,
+			streamed: {
+				authData: fetchAuthData(locals.session.accessToken)
+			}
+		};
+	}
+
+	return {
+		authenticated: false as const,
+		selectedCategory: categoryId ?? '0',
+		streamed: {
+			anonData: fetchAnonData(categoryId)
+		}
 	};
 };

@@ -1,4 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="108" fill="#FF0000"/>
-  <path d="M196 130 L196 382 L388 256 Z" fill="#FFFFFF"/>
+  <!-- Transparent background — the play button "floats" like modern app icons -->
+  <!-- YouTube-style rounded play button, centered and sized at ~70% of canvas -->
+  <rect x="76" y="132" width="360" height="248" rx="62" fill="#FF0000"/>
+  <path d="M218 198 L218 314 L314 256 Z" fill="#FFFFFF"/>
 </svg>

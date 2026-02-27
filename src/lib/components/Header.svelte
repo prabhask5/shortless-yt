@@ -138,6 +138,25 @@
 							>
 								Sign out
 							</a>
+							<div class="border-yt-border my-1 border-t"></div>
+							<a
+								href="/about"
+								class="text-yt-text-secondary hover:bg-yt-surface-hover block px-4 py-2 text-xs"
+							>
+								About
+							</a>
+							<a
+								href="/terms"
+								class="text-yt-text-secondary hover:bg-yt-surface-hover block px-4 py-2 text-xs"
+							>
+								Terms of Service
+							</a>
+							<a
+								href="/privacy"
+								class="text-yt-text-secondary hover:bg-yt-surface-hover block px-4 py-2 text-xs"
+							>
+								Privacy Policy
+							</a>
 						</div>
 					{/if}
 				</div>

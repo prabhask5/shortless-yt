@@ -6,10 +6,7 @@
 	- Authenticated: shows subscriptions bar + recent videos from subscribed channels.
 	- Anonymous: shows category filter chips + trending videos.
 
-	The video grid uses VirtualFeed for efficient rendering of large lists,
-	with responsive column counts calculated from the viewport width.
-	Pull-to-refresh support (via invalidateAll) lets mobile users swipe down
-	to reload the feed data from the server.
+	Uses SvelteKit streaming for instant page load with YouTube-style skeletons.
 -->
 <script lang="ts">
 	import VideoCard from '$lib/components/VideoCard.svelte';
@@ -29,9 +26,6 @@
 
 	let columns = $state(1);
 
-	/* Responsive column calculation: listens to window resize and maps
-	 * breakpoints to column counts. The effect cleanup removes the listener
-	 * to avoid leaks when this component is destroyed. */
 	$effect(() => {
 		function updateColumns() {
 			const w = window.innerWidth;
@@ -59,70 +53,109 @@
 	<meta name="description" content="YouTube without Shorts" />
 </svelte:head>
 
-<!-- Pull-to-refresh wraps the entire page; triggers a full server reload -->
+{#snippet videoSkeletons()}
+	<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+		{#each Array(12) as _unused, i (i)}
+			<Skeleton variant="video-card" />
+		{/each}
+	</div>
+{/snippet}
+
 <PullToRefresh onRefresh={() => invalidateAll()}>
 	<div class="mx-auto max-w-screen-2xl px-4 py-4">
-		<!-- Conditional rendering: auth users get subscriptions, anon users get category chips -->
-		{#if data.authenticated && 'subscriptions' in data}
-			{#if data.subscriptions && data.subscriptions.length > 0}
+		{#if data.authenticated && 'streamed' in data && data.streamed.authData}
+			{#await data.streamed.authData}
+				<!-- Skeleton: subscription bar placeholder + video grid -->
 				<section class="mb-6">
-					<h2 class="mb-3 text-lg font-medium">Subscriptions</h2>
-					<ChannelBar
-						channels={data.subscriptions.map((s) => ({
-							id: s.id,
-							title: s.title,
-							thumbnailUrl: s.thumbnailUrl
-						}))}
-					/>
+					<div class="bg-yt-surface mb-3 h-5 w-32 animate-pulse rounded"></div>
+					<div class="flex gap-4 overflow-hidden">
+						{#each Array(8) as _unused, i (i)}
+							<div class="flex shrink-0 flex-col items-center gap-2">
+								<div class="bg-yt-surface h-14 w-14 animate-pulse rounded-full"></div>
+								<div class="bg-yt-surface h-3 w-12 animate-pulse rounded"></div>
+							</div>
+						{/each}
+					</div>
 				</section>
-			{/if}
-		{:else if 'categories' in data && data.categories}
-			<section class="mb-4">
-				<CategoryChips
-					categories={[{ id: '0', title: 'All' }, ...data.categories]}
-					selected={selectedCategory}
-					onChange={handleCategoryChange}
-				/>
-			</section>
-		{/if}
-
-		<!-- Video grid: subscription feed for auth users, trending for anon users -->
-		<section>
-			{#if data.authenticated && 'feed' in data}
-				{#if data.feed && data.feed.length > 0}
-					<VirtualFeed
-						items={data.feed}
-						{columns}
-						estimateRowHeight={columns === 1 ? 300 : 280}
-						gap={16}
-					>
-						{#snippet children(video)}
-							<VideoCard {video} />
-						{/snippet}
-					</VirtualFeed>
-				{:else}
-					<p class="text-yt-text-secondary py-8 text-center">
-						No recent videos from your subscriptions.
-					</p>
+				<section>
+					{@render videoSkeletons()}
+				</section>
+			{:then authData}
+				{#if authData.subscriptions && authData.subscriptions.length > 0}
+					<section class="mb-6">
+						<h2 class="mb-3 text-lg font-medium">Subscriptions</h2>
+						<ChannelBar
+							channels={authData.subscriptions.map((s) => ({
+								id: s.id,
+								title: s.title,
+								thumbnailUrl: s.thumbnailUrl
+							}))}
+						/>
+					</section>
 				{/if}
-			{:else if 'trending' in data && data.trending && data.trending.length > 0}
-				<VirtualFeed
-					items={data.trending}
-					{columns}
-					estimateRowHeight={columns === 1 ? 300 : 280}
-					gap={16}
-				>
-					{#snippet children(video)}
-						<VideoCard {video} />
-					{/snippet}
-				</VirtualFeed>
-			{:else}
-				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-					{#each Array(12) as _unused, i (i)}
-						<Skeleton variant="video-card" />
-					{/each}
-				</div>
-			{/if}
-		</section>
+				<section>
+					{#if authData.feed && authData.feed.length > 0}
+						<VirtualFeed
+							items={authData.feed}
+							{columns}
+							estimateRowHeight={columns === 1 ? 300 : 280}
+							gap={16}
+						>
+							{#snippet children(video)}
+								<VideoCard {video} />
+							{/snippet}
+						</VirtualFeed>
+					{:else}
+						<p class="text-yt-text-secondary py-8 text-center">
+							No recent videos from your subscriptions.
+						</p>
+					{/if}
+				</section>
+			{:catch}
+				<p class="text-yt-text-secondary py-8 text-center">Failed to load feed.</p>
+			{/await}
+		{:else if 'streamed' in data && data.streamed.anonData}
+			{#await data.streamed.anonData}
+				<!-- Skeleton: chip bar placeholder + video grid -->
+				<section class="mb-4">
+					<div class="flex gap-2 overflow-hidden">
+						{#each Array(6) as _unused, i (i)}
+							<div class="bg-yt-surface h-8 w-20 shrink-0 animate-pulse rounded-lg"></div>
+						{/each}
+					</div>
+				</section>
+				<section>
+					{@render videoSkeletons()}
+				</section>
+			{:then anonData}
+				{#if anonData.categories && anonData.categories.length > 0}
+					<section class="mb-4">
+						<CategoryChips
+							categories={[{ id: '0', title: 'All' }, ...anonData.categories]}
+							selected={selectedCategory}
+							onChange={handleCategoryChange}
+						/>
+					</section>
+				{/if}
+				<section>
+					{#if anonData.trending && anonData.trending.length > 0}
+						<VirtualFeed
+							items={anonData.trending}
+							{columns}
+							estimateRowHeight={columns === 1 ? 300 : 280}
+							gap={16}
+						>
+							{#snippet children(video)}
+								<VideoCard {video} />
+							{/snippet}
+						</VirtualFeed>
+					{:else}
+						{@render videoSkeletons()}
+					{/if}
+				</section>
+			{:catch}
+				<p class="text-yt-text-secondary py-8 text-center">Failed to load trending videos.</p>
+			{/await}
+		{/if}
 	</div>
 </PullToRefresh>

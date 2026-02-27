@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Maskable icon: dark background fills the safe zone, play button centered -->
+  <rect width="512" height="512" fill="#0f0f0f"/>
+  <rect x="106" y="162" width="300" height="188" rx="48" fill="#FF0000"/>
+  <path d="M222 212 L222 300 L306 256 Z" fill="#FFFFFF"/>
+</svg>

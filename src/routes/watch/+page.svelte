@@ -1,18 +1,8 @@
 <!--
 	@component Watch Page
 
-	Renders the video player, details, chapter markers, and comment section
-	for a single video. Uses a two-column grid on desktop (player+details on
-	the left, related videos on the right).
-
-	State management notes:
-	- `playerStartTime` is initialized from server data (`data.startTime`) and
-	  updated by the chapter seek handler. The `svelte-ignore state_referenced_locally`
-	  directive is needed because we initialize $state() from a reactive prop --
-	  Svelte warns about this pattern since the state will NOT re-sync if the prop
-	  changes, but that is intentional here (we only want the initial value).
-	- Comments are loaded in pages: the first page comes from the server load,
-	  subsequent pages are fetched client-side via the `/api/comments` endpoint.
+	Renders the video player immediately (blocking data), then streams in
+	channel details, related videos, and comments with skeleton placeholders.
 -->
 <script lang="ts">
 	import VideoPlayer from '$lib/components/VideoPlayer.svelte';
@@ -20,33 +10,32 @@
 	import VideoChapters from '$lib/components/VideoChapters.svelte';
 	import CommentSection from '$lib/components/CommentSection.svelte';
 	import VideoCard from '$lib/components/VideoCard.svelte';
+	import Skeleton from '$lib/components/Skeleton.svelte';
 	import type { CommentItem } from '$lib/types';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 
-	/* Initial seek position from the `t` query param. Updated when the user
-	 * clicks a chapter marker. svelte-ignore: we intentionally snapshot the
-	 * server value once rather than keeping it reactive. */
 	// svelte-ignore state_referenced_locally
 	let playerStartTime = $state(data.startTime);
 
-	// Called by VideoChapters when the user clicks a chapter timestamp
 	function handleSeek(seconds: number) {
 		playerStartTime = seconds;
 	}
 
-	/* Comment pagination state: seeded from server data, then extended
-	 * client-side as the user clicks "load more". Same svelte-ignore
-	 * rationale as playerStartTime above. */
-	// svelte-ignore state_referenced_locally
-	let comments = $state<CommentItem[]>(data.comments);
-	// svelte-ignore state_referenced_locally
-	let nextPageToken = $state(data.commentsNextPageToken);
+	/** Client-side comment pagination state — initialized when streamed data resolves */
+	let comments = $state<CommentItem[]>([]);
+	let nextPageToken = $state<string | undefined>(undefined);
 	let loadingMoreComments = $state(false);
+	$effect(() => {
+		if (data.streamed?.sidebarData) {
+			data.streamed.sidebarData.then((sidebar) => {
+				comments = sidebar.comments;
+				nextPageToken = sidebar.commentsNextPageToken;
+			});
+		}
+	});
 
-	/* Fetches the next page of comments from the server-side API proxy.
-	 * Appends results to the existing array to create an infinite scroll effect. */
 	async function loadMoreComments() {
 		if (!nextPageToken || loadingMoreComments) return;
 		loadingMoreComments = true;
@@ -73,44 +62,94 @@
 	<meta name="description" content={data.video.title} />
 </svelte:head>
 
-<!-- Two-column layout: video content (2/3) + related videos sidebar (1/3) on large screens -->
 <div class="mx-auto max-w-screen-xl px-4 py-4">
 	<div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
 		<div class="lg:col-span-2">
+			<!-- Video player renders immediately (blocking data) -->
 			<VideoPlayer videoId={data.video.id} startTime={playerStartTime} />
 
-			<VideoDetails
-				title={data.video.title}
-				viewCount={data.video.viewCount}
-				publishedAt={data.video.publishedAt}
-				channelId={data.video.channelId}
-				channelTitle={data.video.channelTitle}
-				channelAvatarUrl={data.channel?.thumbnailUrl}
-				subscriberCount={data.channel?.subscriberCount}
-				description={data.video.description ?? ''}
-				likeCount={data.video.likeCount ?? ''}
-			/>
+			<!-- Channel details + comments stream in -->
+			{#await data.streamed.sidebarData}
+				<!-- Skeleton for video details -->
+				<div class="mt-4 space-y-3">
+					<div class="bg-yt-surface h-6 w-3/4 animate-pulse rounded"></div>
+					<div class="flex items-center gap-3">
+						<div class="bg-yt-surface h-10 w-10 animate-pulse rounded-full"></div>
+						<div class="space-y-1">
+							<div class="bg-yt-surface h-4 w-32 animate-pulse rounded"></div>
+							<div class="bg-yt-surface h-3 w-20 animate-pulse rounded"></div>
+						</div>
+					</div>
+					<div class="bg-yt-surface h-20 w-full animate-pulse rounded-xl"></div>
+				</div>
+				<!-- Skeleton for comments -->
+				<div class="mt-6 space-y-4">
+					{#each Array(4) as _unused, i (i)}
+						<Skeleton variant="comment" />
+					{/each}
+				</div>
+			{:then sidebar}
+				<VideoDetails
+					title={data.video.title}
+					viewCount={data.video.viewCount}
+					publishedAt={data.video.publishedAt}
+					channelId={data.video.channelId}
+					channelTitle={data.video.channelTitle}
+					channelAvatarUrl={sidebar.channel?.thumbnailUrl}
+					subscriberCount={sidebar.channel?.subscriberCount}
+					description={data.video.description ?? ''}
+					likeCount={data.video.likeCount ?? ''}
+				/>
 
-			{#if data.video.description}
-				<VideoChapters description={data.video.description} onSeek={handleSeek} />
-			{/if}
+				{#if data.video.description}
+					<VideoChapters description={data.video.description} onSeek={handleSeek} />
+				{/if}
 
-			<CommentSection
-				{comments}
-				loading={loadingMoreComments}
-				onLoadMore={loadMoreComments}
-				hasMore={!!nextPageToken}
-			/>
+				<CommentSection
+					{comments}
+					loading={loadingMoreComments}
+					onLoadMore={loadMoreComments}
+					hasMore={!!nextPageToken}
+				/>
+			{:catch}
+				<VideoDetails
+					title={data.video.title}
+					viewCount={data.video.viewCount}
+					publishedAt={data.video.publishedAt}
+					channelId={data.video.channelId}
+					channelTitle={data.video.channelTitle}
+					description={data.video.description ?? ''}
+					likeCount={data.video.likeCount ?? ''}
+				/>
+			{/await}
 		</div>
 
-		<!-- More from this channel -->
-		{#if data.relatedVideos && data.relatedVideos.length > 0}
+		<!-- More from this channel sidebar -->
+		{#await data.streamed.sidebarData}
 			<aside class="flex flex-col gap-3">
-				<h2 class="text-yt-text text-base font-medium">More from this channel</h2>
-				{#each data.relatedVideos.slice(0, 15) as video (video.id)}
-					<VideoCard {video} layout="horizontal" />
+				<div class="bg-yt-surface h-5 w-48 animate-pulse rounded"></div>
+				{#each Array(5) as _unused, i (i)}
+					<div class="flex gap-3">
+						<div class="bg-yt-surface h-20 w-36 shrink-0 animate-pulse rounded-lg"></div>
+						<div class="flex-1 space-y-2">
+							<div class="bg-yt-surface h-4 w-full animate-pulse rounded"></div>
+							<div class="bg-yt-surface h-3 w-24 animate-pulse rounded"></div>
+							<div class="bg-yt-surface h-3 w-16 animate-pulse rounded"></div>
+						</div>
+					</div>
 				{/each}
 			</aside>
-		{/if}
+		{:then sidebar}
+			{#if sidebar.relatedVideos && sidebar.relatedVideos.length > 0}
+				<aside class="flex flex-col gap-3">
+					<h2 class="text-yt-text text-base font-medium">More from this channel</h2>
+					{#each sidebar.relatedVideos.slice(0, 15) as video (video.id)}
+						<VideoCard {video} layout="horizontal" />
+					{/each}
+				</aside>
+			{/if}
+		{:catch}
+			<!-- Silently omit sidebar on error -->
+		{/await}
 	</div>
 </div>
