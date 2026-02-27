@@ -11,16 +11,11 @@
 	 * (each row containing `columns` items), and the virtualizer operates on rows rather
 	 * than individual items. Each virtual row is rendered as a CSS grid.
 	 *
-	 * The virtualizer is initialized with count=0 and estimateSize=300 as placeholder
-	 * values. The $effect immediately syncs the real values (actual row count, configured
-	 * estimateRowHeight, and gap) once the component mounts and whenever props change.
-	 * This two-step approach is necessary because createWindowVirtualizer runs at
-	 * declaration time before reactive props are available.
-	 *
 	 * The generic type parameter T allows this component to virtualize any item type
 	 * (VideoItem, ChannelItem, etc.) with a type-safe children snippet.
 	 */
 	import type { Snippet } from 'svelte';
+	import { untrack } from 'svelte';
 	import { createWindowVirtualizer } from '@tanstack/svelte-virtual';
 
 	let {
@@ -73,36 +68,40 @@
 
 	/*
 	 * Sync real reactive values into the virtualizer whenever they change.
-	 * This effect runs on mount and re-runs when rows.length, estimateRowHeight,
-	 * or gap changes (e.g., when items are added or the layout configuration changes).
+	 * This effect tracks rows.length, estimateRowHeight, and gap as dependencies.
+	 *
+	 * IMPORTANT: The $virtualizer store read is wrapped in `untrack` to avoid a
+	 * circular dependency — setOptions triggers the store's onChange callback which
+	 * emits a new value; without untrack, that emission would re-trigger this effect.
 	 */
 	$effect(() => {
-		$virtualizer.setOptions({
-			count: rows.length,
-			estimateSize: () => estimateRowHeight,
-			gap
+		const count = rows.length;
+		const size = estimateRowHeight;
+		const g = gap;
+		untrack(() => {
+			$virtualizer.setOptions({
+				count,
+				estimateSize: () => size,
+				gap: g
+			});
 		});
 	});
-
-	/** The subset of virtual row items currently visible (plus overscan buffer) */
-	let virtualItems = $derived($virtualizer.getVirtualItems());
-	/** Total pixel height of all rows, used to size the scroll container */
-	let totalSize = $derived($virtualizer.getTotalSize());
 </script>
 
-<!-- Outer container: sized to the total virtual height so the browser's native
-     scrollbar reflects the full list length. position:relative anchors the
-     absolutely-positioned row elements inside. -->
-<div style="position: relative; width: 100%; height: {totalSize}px;">
-	{#each virtualItems as virtualRow (virtualRow.key)}
+<!--
+	Read virtualizer methods directly in the template rather than through $derived.
+	The @tanstack/svelte-virtual store emits the same Virtualizer object reference on
+	each update (it mutates in place). In Svelte 5, $derived may skip re-computation
+	when the return value is reference-equal. Reading $virtualizer directly in the
+	template ensures Svelte re-renders the block on every store emission.
+-->
+<div style="position: relative; width: 100%; height: {$virtualizer.getTotalSize()}px;">
+	{#each $virtualizer.getVirtualItems() as virtualRow (virtualRow.key)}
 		{@const rowItems = rows[virtualRow.index]}
-		<!-- Each row is absolutely positioned at its calculated Y offset via translateY.
-		     This avoids layout recalculation when rows enter/leave the viewport. -->
 		<div
 			style="position: absolute; top: 0; left: 0; width: 100%; height: {virtualRow.size}px; transform: translateY({virtualRow.start}px);"
 		>
 			{#if columns > 1}
-				<!-- Multi-column: render items in a CSS grid row -->
 				<div
 					style="display: grid; grid-template-columns: repeat({columns}, minmax(0, 1fr)); gap: {gap}px; height: 100%;"
 				>
@@ -111,7 +110,6 @@
 					{/each}
 				</div>
 			{:else}
-				<!-- Single column: render items directly without a grid wrapper -->
 				{#each rowItems as item, i (i)}
 					{@render children(item)}
 				{/each}
