@@ -75,7 +75,7 @@
 
 {#if needRefresh}
 	<div
-		class="bg-yt-surface border-yt-border fixed bottom-4 left-1/2 z-[100] flex -translate-x-1/2 items-center gap-3 rounded-xl border px-4 py-3 shadow-lg"
+		class="bg-yt-surface border-yt-border fixed right-4 bottom-4 left-4 z-[100] mx-auto flex max-w-md items-center gap-3 rounded-xl border px-4 py-3 shadow-lg"
 	>
 		<span class="text-yt-text text-sm">New version available</span>
 		<button
