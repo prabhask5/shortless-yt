@@ -44,14 +44,17 @@ const SHORTS_CACHE_MAX_SIZE = 50_000;
 
 /**
  * Timeout in milliseconds for each HEAD probe request.
- * 3 seconds is generous for a HEAD-only request. If YouTube is slower than
- * this, we treat the video as a Short (fail-safe) and don't cache the result
- * so it can be retried on the next page load.
+ * 2 seconds is plenty for a HEAD-only request (no body transferred).
+ * On timeout we keep the video and retry on the next request.
  */
-const HEAD_PROBE_TIMEOUT_MS = 3_000;
+const HEAD_PROBE_TIMEOUT_MS = 2_000;
 
-/** Maximum number of concurrent HEAD probes. */
-const HEAD_PROBE_CONCURRENCY = 6;
+/**
+ * Maximum number of concurrent HEAD probes.
+ * HEAD requests are tiny (~200 bytes), so high concurrency is safe.
+ * 20 covers a full page of results in a single parallel batch.
+ */
+const HEAD_PROBE_CONCURRENCY = 20;
 
 /**
  * Permanent cache for shorts detection results (videoId -> isShort).
