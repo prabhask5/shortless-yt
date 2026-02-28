@@ -21,18 +21,33 @@
 
 	/** @prop user - The signed-in user's avatar and channel title, or null/undefined if not signed in */
 	/** @prop query - The current search query, used to pre-fill the SearchBar on search result pages */
+	/** @prop onRefresh - Optional async callback for the mobile refresh button */
 	let {
 		user,
-		query
+		query,
+		onRefresh
 	}: {
 		user?: { avatarUrl: string; channelTitle: string } | null;
 		query?: string;
+		onRefresh?: () => Promise<void>;
 	} = $props();
 
 	/** Whether the mobile-only full-width search view is open */
 	let mobileSearchOpen = $state(false);
 	/** Whether the user avatar dropdown menu is visible */
 	let userMenuOpen = $state(false);
+	/** Whether a refresh is in progress */
+	let refreshing = $state(false);
+
+	async function handleRefresh() {
+		if (refreshing || !onRefresh) return;
+		refreshing = true;
+		try {
+			await onRefresh();
+		} finally {
+			refreshing = false;
+		}
+	}
 
 	/** Close the user menu when clicking anywhere outside it */
 	function handleWindowClick(e: MouseEvent) {
@@ -78,8 +93,33 @@
 			<SearchBar initialQuery={query ?? ''} />
 		</div>
 
-		<!-- Right side actions: search toggle (mobile only), dark mode, and user menu -->
+		<!-- Right side actions: refresh (mobile), search toggle (mobile), dark mode, user menu -->
 		<div class="ml-auto flex items-center gap-1">
+			<!-- Mobile refresh button: only visible on mobile when onRefresh is provided -->
+			{#if onRefresh}
+				<button
+					onclick={handleRefresh}
+					disabled={refreshing}
+					class="text-yt-text-secondary hover:text-yt-text p-2 transition-colors md:hidden"
+					class:refreshing
+					aria-label="Refresh feed"
+				>
+					<svg
+						class="h-5 w-5"
+						class:animate-spin={refreshing}
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<path d="M21 12a9 9 0 1 1-6.219-8.56" />
+						<path d="M21 3v6h-6" />
+					</svg>
+				</button>
+			{/if}
+
 			<!-- Mobile search toggle: only visible on screens smaller than md breakpoint -->
 			<button
 				onclick={() => (mobileSearchOpen = true)}

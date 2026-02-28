@@ -21,6 +21,7 @@
 	import { authState } from '$lib/stores/auth';
 	import { page } from '$app/stores';
 	import { navigating } from '$app/stores';
+	import { invalidateAll } from '$app/navigation';
 
 	let { children } = $props();
 
@@ -61,7 +62,7 @@
 
 <!-- App shell: full-height flex column with sticky header and stretchy main -->
 <div class="bg-yt-bg text-yt-text flex min-h-screen flex-col">
-	<Header user={$authState.user} {query} />
+	<Header user={$authState.user} {query} onRefresh={() => invalidateAll()} />
 
 	{#if quotaExhausted}
 		<div class="border-b border-yellow-600/30 bg-yellow-900/30 px-4 py-3 text-center">
