@@ -14,7 +14,7 @@
 	import ChannelBar from '$lib/components/ChannelBar.svelte';
 	import CategoryChips from '$lib/components/CategoryChips.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
-	import PullToRefresh from '$lib/components/PullToRefresh.svelte';
+	import RefreshButton from '$lib/components/RefreshButton.svelte';
 	import { useColumns } from '$lib/stores/columns.svelte';
 	import { invalidateAll, goto } from '$app/navigation';
 	import type { VideoItem } from '$lib/types';
@@ -123,7 +123,7 @@
 	</div>
 {/snippet}
 
-<PullToRefresh onRefresh={() => invalidateAll()}>
+<RefreshButton onRefresh={() => invalidateAll()}>
 	<div class="mx-auto max-w-screen-2xl px-4 py-4">
 		{#if data.authenticated && 'streamed' in data && data.streamed.authData}
 			{#await data.streamed.authData}
@@ -226,4 +226,4 @@
 			{/await}
 		{/if}
 	</div>
-</PullToRefresh>
+</RefreshButton>
