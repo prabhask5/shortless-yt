@@ -75,18 +75,18 @@
 
 {#if needRefresh}
 	<div
-		class="bg-yt-surface border-yt-border fixed right-4 bottom-4 left-4 z-[100] mx-auto flex max-w-md items-center gap-3 rounded-xl border px-4 py-3 shadow-lg"
+		class="bg-yt-surface border-yt-border fixed bottom-4 left-1/2 z-[100] flex -translate-x-1/2 items-center gap-3 rounded-xl border px-4 py-3 shadow-lg max-sm:w-4/5 sm:w-96"
 	>
-		<span class="text-yt-text text-sm">New version available</span>
+		<span class="text-yt-text flex-1 text-sm">New version available</span>
 		<button
 			onclick={handleUpdate}
-			class="bg-yt-accent rounded-full px-4 py-1.5 text-sm font-medium text-white hover:opacity-90"
+			class="bg-yt-accent shrink-0 rounded-full px-4 py-1.5 text-sm font-medium text-white hover:opacity-90"
 		>
 			Update
 		</button>
 		<button
 			onclick={handleDismiss}
-			class="text-yt-text-secondary hover:text-yt-text text-sm"
+			class="text-yt-text-secondary hover:text-yt-text shrink-0 p-1 text-sm"
 			aria-label="Dismiss"
 		>
 			<svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
