@@ -1,29 +1,30 @@
 /**
- * @fileoverview In-memory TTL (Time-To-Live) cache for YouTube API quota conservation.
+ * @fileoverview Two-layer TTL cache: in-memory L1 + Upstash Redis L2.
  *
  * The YouTube Data API v3 imposes a strict daily quota (default 10,000 units).
- * Every search costs 100 units and every video/channel detail call costs 1 unit,
- * so aggressive caching is essential to stay under the limit.
+ * Aggressive caching is essential to stay under the limit.
  *
- * Two singleton cache instances are exported:
- * - `publicCache` — for data that is the same for all users (trending, video
- *   details, categories, search results, etc.).
- * - `userCache`  — for per-session authenticated data (subscriptions, liked
- *   videos, user playlists) keyed by a token suffix.
+ * **L1 (in-memory):** Fast, zero-latency reads within a single serverless
+ * invocation. On Vercel, this only lives as long as the warm instance (~5-15
+ * minutes of inactivity). Serves as a hot cache for repeated reads within
+ * the same request or closely-spaced requests hitting the same instance.
  *
- * Architecture notes:
- * - The cache is purely in-memory (a `Map`), which means it resets on server
- *   restart. This is acceptable because YouTube data changes frequently and
- *   the cache exists primarily to absorb repeated requests within short
- *   time windows (e.g. pagination, back-navigation).
- * - A background cleanup interval runs every 5 minutes to evict expired entries,
- *   preventing unbounded memory growth. The interval is conservative (5 min)
- *   rather than aggressive because `get()` already performs lazy eviction on
- *   access, so the sweep is just a safety net for entries that are never read
- *   again.
+ * **L2 (Upstash Redis):** Persists across all serverless invocations.
+ * Accessed via HTTP (~1-5ms latency). When L1 misses, L2 is checked.
+ * On L2 hit, the value is promoted back into L1. On L2 miss, the caller
+ * fetches fresh data and writes to both layers.
+ *
+ * When Redis is not configured (local dev), the cache degrades gracefully
+ * to L1-only behavior — identical to the original implementation.
+ *
+ * Two singleton instances are exported:
+ * - `publicCache` — for data shared across all users (trending, video details, etc.)
+ * - `userCache`  — for per-session authenticated data (subscriptions, liked videos)
  */
 
-/** Internal representation of a cache entry with an absolute expiration timestamp. */
+import { redisGet, redisSet } from './redis.js';
+
+/** Internal representation of an L1 cache entry with an absolute expiration timestamp. */
 interface CacheEntry<T> {
 	data: T;
 	/** Unix epoch milliseconds after which this entry is considered stale. */
@@ -31,84 +32,97 @@ interface CacheEntry<T> {
 }
 
 /**
- * A simple key-value cache where each entry has an independent TTL.
+ * A two-layer key-value cache: in-memory L1 with Upstash Redis L2.
  *
- * Entries are lazily evicted on read (if expired) and periodically swept
- * by a background interval to reclaim memory from entries that are never
- * re-read after expiry.
+ * L1 entries are lazily evicted on read (if expired) and periodically swept
+ * by a background interval. L2 entries are managed by Redis TTL.
  */
 class TTLCache {
 	private store = new Map<string, CacheEntry<unknown>>();
 	private cleanupInterval: ReturnType<typeof setInterval>;
+	private prefix: string;
 
-	constructor() {
-		/*
-		 * Run a background sweep every 5 minutes. This is intentionally infrequent
-		 * because `get()` already evicts stale entries on access — the sweep only
-		 * catches "orphaned" entries that were written but never read again.
-		 */
+	/**
+	 * @param prefix - A namespace prefix for Redis keys to avoid collisions
+	 *                 between cache instances (e.g. "pub:" vs "usr:").
+	 */
+	constructor(prefix: string) {
+		this.prefix = prefix;
 		this.cleanupInterval = setInterval(() => this.cleanup(), 5 * 60 * 1000);
 	}
 
 	/**
-	 * Retrieve a cached value by key.
+	 * Retrieve a cached value by key. Checks L1 first, then L2 (Redis).
 	 *
 	 * @param key - Cache key.
 	 * @returns The cached value, or `undefined` if missing or expired.
 	 */
 	get<T>(key: string): T | undefined {
 		const entry = this.store.get(key);
-		if (!entry) return undefined;
-
-		/* Lazy eviction: delete on read if the entry has expired. */
-		if (Date.now() > entry.expiresAt) {
-			this.store.delete(key);
-			return undefined;
+		if (entry) {
+			if (Date.now() > entry.expiresAt) {
+				this.store.delete(key);
+			} else {
+				return entry.data as T;
+			}
 		}
-
-		return entry.data as T;
+		return undefined;
 	}
 
 	/**
-	 * Store a value with a given TTL.
+	 * Retrieve a cached value, checking Redis L2 if L1 misses.
+	 * Use this for expensive operations where the Redis round trip is worth it.
+	 *
+	 * @param key - Cache key.
+	 * @param ttlMs - TTL to use when promoting from L2 to L1.
+	 * @returns The cached value, or `undefined` if missing in both layers.
+	 */
+	async getWithRedis<T>(key: string, ttlMs: number): Promise<T | undefined> {
+		/* L1 check */
+		const l1 = this.get<T>(key);
+		if (l1 !== undefined) return l1;
+
+		/* L2 check */
+		const l2 = await redisGet<T>(this.prefix + key);
+		if (l2 !== undefined) {
+			/* Promote to L1 */
+			this.store.set(key, { data: l2, expiresAt: Date.now() + ttlMs });
+			return l2;
+		}
+
+		return undefined;
+	}
+
+	/**
+	 * Store a value in both L1 (in-memory) and L2 (Redis).
 	 *
 	 * @param key   - Cache key.
 	 * @param data  - The value to cache.
-	 * @param ttlMs - Time-to-live in milliseconds from now.
+	 * @param ttlMs - Time-to-live in milliseconds.
 	 */
 	set<T>(key: string, data: T, ttlMs: number): void {
-		this.store.set(key, {
-			data,
-			expiresAt: Date.now() + ttlMs
-		});
+		/* L1 */
+		this.store.set(key, { data, expiresAt: Date.now() + ttlMs });
+		/* L2 — fire and forget */
+		redisSet(this.prefix + key, data, ttlMs);
 	}
 
-	/** Remove all entries from the cache. */
+	/** Remove all entries from L1 (does not clear Redis). */
 	clear(): void {
 		this.store.clear();
 	}
 
-	/**
-	 * Sweep all expired entries from the store.
-	 * Called on a 5-minute interval as a safety net for memory reclamation.
-	 */
+	/** Sweep expired L1 entries. */
 	private cleanup(): void {
 		const now = Date.now();
-		let evicted = 0;
 		for (const [key, entry] of this.store) {
 			if (now > entry.expiresAt) {
 				this.store.delete(key);
-				evicted++;
 			}
-		}
-		if (evicted > 0) {
-			console.log(
-				`[CACHE] Background cleanup evicted ${evicted} expired entries, ${this.store.size} remaining`
-			);
 		}
 	}
 
-	/** Stop the background cleanup timer and clear all data. */
+	/** Stop the background cleanup timer and clear L1. */
 	destroy(): void {
 		clearInterval(this.cleanupInterval);
 		this.store.clear();
@@ -116,7 +130,7 @@ class TTLCache {
 }
 
 /** Shared cache for public data (trending, video details, categories, etc.) */
-export const publicCache = new TTLCache();
+export const publicCache = new TTLCache('pub:');
 
 /** Cache for per-session/authenticated data (subscriptions, liked videos, etc.) */
-export const userCache = new TTLCache();
+export const userCache = new TTLCache('usr:');

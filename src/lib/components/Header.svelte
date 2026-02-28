@@ -171,13 +171,14 @@
 							>
 								Liked videos
 							</a>
-							<a
-								href="/api/auth/logout"
-								data-sveltekit-reload
-								class="text-yt-text hover:bg-yt-surface-hover block px-4 py-2 text-sm"
-							>
-								Sign out
-							</a>
+							<form method="POST" action="/api/auth/logout">
+								<button
+									type="submit"
+									class="text-yt-text hover:bg-yt-surface-hover block w-full px-4 py-2 text-left text-sm"
+								>
+									Sign out
+								</button>
+							</form>
 							<div class="border-yt-border my-1 border-t"></div>
 							<a
 								href="/about"

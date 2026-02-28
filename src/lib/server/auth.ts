@@ -11,9 +11,7 @@
  * The session payload (tokens, expiry, basic profile info) is encrypted with
  * AES-256-GCM using a key derived from `AUTH_SECRET`. This provides both
  * confidentiality (tokens are opaque in the cookie) and integrity (the GCM
- * auth tag prevents tampering). Legacy HMAC-signed cookies from before this
- * change are detected and accepted for a smooth migration — they'll be
- * upgraded to AES-GCM on the next cookie write.
+ * auth tag prevents tampering).
  *
  * The access token scope is `youtube.readonly`, which allows reading
  * subscriptions, liked videos, and playlists but cannot modify anything.
@@ -23,8 +21,7 @@ import {
 	createHmac as nodeCreateHmac,
 	createCipheriv,
 	createDecipheriv,
-	randomBytes,
-	timingSafeEqual
+	randomBytes
 } from 'node:crypto';
 import { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, AUTH_SECRET, PUBLIC_APP_URL } from './env.js';
 import type { UserSession } from '$lib/types.js';
@@ -167,10 +164,16 @@ export async function refreshAccessToken(
  * Derive a 32-byte AES-256 encryption key from AUTH_SECRET.
  *
  * Uses HMAC-SHA256 with a fixed label so any length of AUTH_SECRET produces
- * exactly 32 bytes suitable for AES-256.
+ * exactly 32 bytes suitable for AES-256. Memoized since AUTH_SECRET never
+ * changes at runtime.
  */
+let _encryptionKey: Buffer | null = null;
 function getEncryptionKey(): Buffer {
-	return nodeCreateHmac('sha256', AUTH_SECRET()).update('shortless-session-encryption').digest();
+	if (_encryptionKey) return _encryptionKey;
+	_encryptionKey = nodeCreateHmac('sha256', AUTH_SECRET())
+		.update('shortless-session-encryption')
+		.digest();
+	return _encryptionKey;
 }
 
 /**
@@ -199,10 +202,9 @@ export function encryptSession(session: UserSession): string {
 /**
  * Validate and deserialize a session cookie string.
  *
- * Supports two formats:
- * - **AES-256-GCM** (3 dot-separated parts): `iv.tag.ciphertext` — current format.
- * - **Legacy HMAC** (2 dot-separated parts): `payload.signature` — migration path
- *   for existing sessions; these will be upgraded to AES-GCM on next cookie write.
+ * Only accepts AES-256-GCM format (3 dot-separated parts): `iv.tag.ciphertext`.
+ * Legacy HMAC-signed cookies are no longer accepted — users with old sessions
+ * will be signed out and need to re-authenticate.
  *
  * @param cookie - The raw cookie string.
  * @returns The parsed {@link UserSession}, or `null` if invalid/tampered.
@@ -213,10 +215,6 @@ export function decryptSession(cookie: string): UserSession | null {
 
 		if (parts.length === 3) {
 			return decryptAesGcm(parts[0], parts[1], parts[2]);
-		}
-
-		if (parts.length === 2) {
-			return decryptLegacyHmac(parts[0], parts[1]);
 		}
 
 		return null;
@@ -245,44 +243,4 @@ function decryptAesGcm(ivB64: string, tagB64: string, ciphertextB64: string): Us
 	}
 
 	return session;
-}
-
-/**
- * Decrypt a session from the legacy HMAC-signed cookie format.
- *
- * Uses timing-safe comparison to prevent timing attacks on the HMAC signature.
- * Existing sessions in this format will continue to work; they'll be re-encrypted
- * with AES-GCM on the next cookie write (e.g. token refresh).
- */
-function decryptLegacyHmac(encoded: string, signature: string): UserSession | null {
-	const expectedSignature = signHmac(encoded);
-
-	const sigBuf = Buffer.from(signature, 'base64url');
-	const expectedBuf = Buffer.from(expectedSignature, 'base64url');
-
-	if (sigBuf.length !== expectedBuf.length || !timingSafeEqual(sigBuf, expectedBuf)) {
-		return null;
-	}
-
-	const payload = Buffer.from(encoded, 'base64url').toString('utf-8');
-	const session = JSON.parse(payload) as UserSession;
-
-	if (!session.accessToken || !session.refreshToken || !session.expiresAt) {
-		return null;
-	}
-
-	return session;
-}
-
-/**
- * Produce an HMAC-SHA256 signature for the given data string.
- * Retained for legacy session format migration support.
- *
- * @param data - The string to sign (typically the base64url-encoded session payload).
- * @returns The HMAC digest as a base64url-encoded string.
- */
-function signHmac(data: string): string {
-	const hmac = nodeCreateHmac('sha256', AUTH_SECRET());
-	hmac.update(data);
-	return hmac.digest('base64url');
 }

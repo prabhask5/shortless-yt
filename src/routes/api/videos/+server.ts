@@ -10,6 +10,7 @@
  * - `?source=channel&pageToken=X&channelId=Y` — channel uploads
  * - `?source=liked&pageToken=X` — authenticated user's liked videos
  * - `?source=search&pageToken=X&q=Y` — search results (mixed types)
+ * - `?source=playlist&pageToken=X&playlistId=Y` — playlist videos
  * - `?source=subfeed&cursor=JSON` — subscription feed
  *
  * All video responses are filtered through `filterOutBrokenVideos` + `filterOutShorts`.
@@ -20,6 +21,7 @@ import {
 	getTrending,
 	getChannelVideos,
 	getLikedVideos,
+	getPlaylistVideos,
 	searchMixed,
 	getSubscriptionFeed
 } from '$lib/server/youtube';
@@ -126,6 +128,21 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			);
 		}
 
+		if (source === 'playlist') {
+			if (!pageToken) throw error(400, 'Missing pageToken parameter');
+			if (pageToken.length > 200) throw error(400, 'pageToken too long');
+			const playlistId = url.searchParams.get('playlistId');
+			if (!playlistId) throw error(400, 'Missing playlistId parameter');
+			if (playlistId.length > 50) throw error(400, 'playlistId too long');
+			const result = await getPlaylistVideos(playlistId, pageToken);
+			const clean = filterOutBrokenVideos(result.items);
+			const filtered = await filterOutShorts(clean);
+			return json(
+				{ items: filtered, nextPageToken: result.pageInfo.nextPageToken },
+				{ headers: { 'Cache-Control': 'public, max-age=300' } }
+			);
+		}
+
 		if (source === 'subfeed') {
 			if (!locals.session) {
 				throw error(401, 'Authentication required');
@@ -157,7 +174,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			);
 		}
 
-		throw error(400, `Unknown source: ${source}`);
+		throw error(400, 'Unknown source parameter');
 	} catch (err) {
 		if (err && typeof err === 'object' && 'status' in err) {
 			throw err;

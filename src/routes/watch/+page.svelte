@@ -37,9 +37,14 @@
 	let comments = $state<CommentItem[]>([]);
 	let nextPageToken = $state<string | undefined>(undefined);
 	let loadingMoreComments = $state(false);
+
+	let sidebarGeneration = 0;
+
 	$effect(() => {
 		if (data.streamed?.sidebarData) {
+			const gen = ++sidebarGeneration;
 			data.streamed.sidebarData.then((sidebar) => {
+				if (gen !== sidebarGeneration) return;
 				comments = sidebar.comments;
 				nextPageToken = sidebar.commentsNextPageToken;
 			});
@@ -58,7 +63,7 @@
 					comments: CommentItem[];
 					nextPageToken?: string;
 				};
-				comments = [...comments, ...result.comments];
+				comments.push(...result.comments);
 				nextPageToken = result.nextPageToken;
 			}
 		} finally {

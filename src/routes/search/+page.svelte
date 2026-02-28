@@ -31,14 +31,23 @@
 	let isLoading = $state(true);
 	let loadingMore = $state(false);
 
+	let generation = 0;
+
 	$effect(() => {
 		if (data.streamed?.searchData) {
+			const gen = ++generation;
 			isLoading = true;
-			data.streamed.searchData.then((searchData) => {
-				allResults = searchData.results as SearchResult[];
-				nextPageToken = searchData.nextPageToken;
-				isLoading = false;
-			});
+			data.streamed.searchData
+				.then((searchData) => {
+					if (gen !== generation) return;
+					allResults = searchData.results as SearchResult[];
+					nextPageToken = searchData.nextPageToken;
+					isLoading = false;
+				})
+				.catch(() => {
+					if (gen !== generation) return;
+					isLoading = false;
+				});
 		} else if ('results' in data) {
 			allResults = data.results as SearchResult[];
 			nextPageToken = undefined;
@@ -62,8 +71,9 @@
 				q: data.query
 			});
 			const res = await fetch(`/api/videos?${params}`);
+			if (!res.ok) return;
 			const json = await res.json();
-			allResults = [...allResults, ...(json.results as SearchResult[])];
+			allResults.push(...(json.results as SearchResult[]));
 			nextPageToken = json.nextPageToken;
 		} finally {
 			loadingMore = false;

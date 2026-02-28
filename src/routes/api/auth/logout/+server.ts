@@ -1,19 +1,32 @@
 /**
- * @fileoverview Logout endpoint — clears the session cookie and redirects home.
+ * @fileoverview Logout endpoint — revokes Google tokens and clears the session cookie.
  *
- * Deleting the cookie is sufficient to log the user out because the session
- * is entirely cookie-based (no server-side session store). The encrypted
- * tokens in the cookie become inaccessible once the cookie is removed.
- * The `path: '/'` option ensures the deletion matches the path the cookie
- * was originally set on (cookies are path-scoped).
+ * Uses POST to prevent CSRF attacks (GET logout can be triggered by <img> tags).
+ * Revokes the Google refresh token so stolen tokens become permanently invalid.
  */
 import { redirect } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { SESSION_COOKIE_NAME } from '$lib/server/auth';
+import { SESSION_COOKIE_NAME, decryptSession } from '$lib/server/auth';
 
-export const GET: RequestHandler = async ({ cookies }) => {
-	console.log('[AUTH LOGOUT] Logout request received, clearing session cookie');
+const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
+
+export const POST: RequestHandler = async ({ cookies }) => {
+	const cookie = cookies.get(SESSION_COOKIE_NAME);
+
+	if (cookie) {
+		const session = decryptSession(cookie);
+		/* Revoke the refresh token with Google (best-effort, don't block on failure) */
+		if (session?.refreshToken) {
+			fetch(GOOGLE_REVOKE_URL, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+				body: new URLSearchParams({ token: session.refreshToken })
+			}).catch(() => {
+				/* Silently ignore revocation failures — cookie deletion still logs the user out */
+			});
+		}
+	}
+
 	cookies.delete(SESSION_COOKIE_NAME, { path: '/' });
-	console.log('[AUTH LOGOUT] Session cookie cleared, redirecting to /');
 	throw redirect(302, '/');
 };

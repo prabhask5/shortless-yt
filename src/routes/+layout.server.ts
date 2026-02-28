@@ -18,7 +18,7 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 	if (locals.session) {
 		const profile = await getUserProfile(locals.session.accessToken).catch(() => null);
 		return {
-			user: profile ?? { avatarUrl: '', channelTitle: '' },
+			user: profile ?? null,
 			quotaExhausted
 		};
 	}

@@ -8,7 +8,7 @@
  * Reads and validates the encrypted session cookie, attaching the decoded
  * token data to `event.locals.session` so downstream handlers can check
  * authentication without re-parsing the cookie themselves. Supports both
- * AES-256-GCM (current) and legacy HMAC (migration) session formats.
+ * AES-256-GCM encrypted session format.
  *
  * **2. API rate limiting:**
  * Protects the YouTube API quota (10,000 units/day) by rate-limiting requests
@@ -29,6 +29,7 @@ import {
 	refreshAccessToken,
 	SESSION_COOKIE_NAME
 } from '$lib/server/auth';
+import { PUBLIC_APP_URL } from '$lib/server/env';
 
 // ===================================================================
 // Rate limiting
@@ -155,10 +156,11 @@ export const handle: Handle = async ({ event, resolve }) => {
 						expiresAt: Date.now() + refreshed.expires_in * 1000
 					};
 					/* Write the updated session cookie so the browser stores the fresh token */
+					const isSecure = PUBLIC_APP_URL().startsWith('https://');
 					event.cookies.set(SESSION_COOKIE_NAME, encryptSession(session), {
 						path: '/',
 						httpOnly: true,
-						secure: true,
+						secure: isSecure,
 						sameSite: 'lax',
 						maxAge: 60 * 60 * 24 * 30 // 30 days
 					});

@@ -10,28 +10,49 @@ import type { VideoItem } from '$lib/types';
 import { getChannelDetails, getChannelVideos, checkSubscription } from '$lib/server/youtube';
 import { filterOutShorts, filterOutBrokenVideos } from '$lib/server/shorts';
 
-async function fetchChannelVideos(channelId: string, accessToken?: string) {
-	const [videosResult, isSubscribed] = await Promise.all([
-		getChannelVideos(channelId).catch((err) => {
-			console.error('[CHANNEL PAGE] video fetch FAILED for', channelId, ':', err);
-			return { items: [] as VideoItem[], pageInfo: { totalResults: 0 } };
-		}),
-		accessToken
-			? checkSubscription(accessToken, channelId).catch(() => false)
-			: Promise.resolve(false)
-	]);
+/** Minimum number of non-short videos to collect before showing the initial page. */
+const TARGET_INITIAL_VIDEOS = 12;
+/** Maximum API pages to fetch during initial load to prevent runaway usage. */
+const MAX_INITIAL_PAGES = 6;
 
-	let filteredVideos = filterOutBrokenVideos(videosResult.items);
-	filteredVideos = await filterOutShorts(filteredVideos);
-	filteredVideos.sort(
-		(a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
-	);
+async function fetchChannelVideos(channelId: string, accessToken?: string) {
+	const isSubscribedPromise = accessToken
+		? checkSubscription(accessToken, channelId).catch(() => false)
+		: Promise.resolve(false);
+
+	const collected: VideoItem[] = [];
+	let currentToken: string | undefined = undefined;
+
+	for (let page = 0; page < MAX_INITIAL_PAGES; page++) {
+		let videosResult;
+		try {
+			videosResult = await getChannelVideos(channelId, currentToken);
+		} catch (err) {
+			console.error('[CHANNEL PAGE] video fetch FAILED for', channelId, ':', err);
+			break;
+		}
+
+		let filtered = filterOutBrokenVideos(videosResult.items);
+		filtered = await filterOutShorts(filtered);
+		collected.push(...filtered);
+
+		const nextToken =
+			'nextPageToken' in videosResult.pageInfo
+				? (videosResult.pageInfo.nextPageToken as string | undefined)
+				: undefined;
+		currentToken = nextToken;
+
+		if (collected.length >= TARGET_INITIAL_VIDEOS || !currentToken) break;
+	}
+
+	collected.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+
+	const isSubscribed = await isSubscribedPromise;
 
 	return {
-		videos: filteredVideos,
+		videos: collected,
 		isSubscribed,
-		nextPageToken:
-			'nextPageToken' in videosResult.pageInfo ? videosResult.pageInfo.nextPageToken : undefined
+		nextPageToken: currentToken
 	};
 }
 

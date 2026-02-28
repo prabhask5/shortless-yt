@@ -20,23 +20,26 @@
  * redirects away from the /shorts/ URL). This is the most reliable detection
  * method available without an official API flag.
  *
- * **Fail-safe behavior:**
- * The primary purpose of this application is to remove all Shorts. On HEAD
- * probe timeout or network failure, we treat the video as a Short (remove it)
- * rather than risk showing a Short to the user. Failed probes are NOT cached
- * so they'll be retried on the next request — if the video is a regular video,
- * it will be shown once the probe succeeds.
+ * **Caching strategy:**
+ * Results are cached in three layers:
+ * 1. In-memory Map (L1) — zero-latency, same serverless instance only
+ * 2. Upstash Redis (L2) — persists across all serverless invocations
+ * 3. HEAD probes (L3) — only when both caches miss
  *
- * **Cache bounding:**
- * Results are cached per video ID because a video's Short status never changes
- * after upload. The cache is capped at {@link SHORTS_CACHE_MAX_SIZE} entries
- * with FIFO eviction to prevent unbounded memory growth on long-running servers.
+ * Before probing, we batch-fetch all unknown video IDs from Redis in a single
+ * MGET call (~1-5ms), dramatically reducing HEAD probes on cold serverless starts.
+ *
+ * **Fail-safe behavior:**
+ * On HEAD probe timeout or network failure, we keep the video (return false)
+ * rather than risk hiding legitimate content. Failed probes are NOT cached
+ * so they'll be retried on the next request.
  */
 
 import type { VideoItem } from '$lib/types.js';
+import { redisMGet, redisMSet } from './redis.js';
 
 /**
- * Maximum number of entries in the shorts detection cache.
+ * Maximum number of entries in the in-memory shorts detection cache.
  * At ~50 bytes per entry (11-char videoId key + boolean value + Map overhead),
  * 50,000 entries consume roughly 2.5 MB — well within serverless limits.
  */
@@ -56,25 +59,21 @@ const HEAD_PROBE_TIMEOUT_MS = 2_000;
  */
 const HEAD_PROBE_CONCURRENCY = 20;
 
+/** TTL for shorts detection results in Redis (7 days). A video's Short status never changes. */
+const SHORTS_REDIS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Redis key prefix for shorts detection. */
+const SHORTS_KEY_PREFIX = 'short:';
+
 /**
- * Permanent cache for shorts detection results (videoId -> isShort).
- *
+ * In-memory L1 cache for shorts detection results (videoId -> isShort).
  * Uses a plain Map with FIFO eviction when the size limit is reached.
- * Map insertion order is guaranteed in JavaScript, so iterating from the
- * beginning gives us the oldest entries for eviction.
  */
 const shortsCache = new Map<string, boolean>();
 
 /**
- * Store a shorts detection result in the cache, evicting the oldest 10%
+ * Store a shorts detection result in L1 cache, evicting the oldest 10%
  * of entries if the cache has reached its maximum size.
- *
- * Eviction is done in bulk (10% at a time) rather than one-at-a-time to
- * amortize the cost — a single eviction pass handles the next ~5,000
- * insertions without needing to evict again.
- *
- * @param videoId - The YouTube video ID.
- * @param value   - Whether the video is a Short.
  */
 function shortsCacheSet(videoId: string, value: boolean): void {
 	if (shortsCache.size >= SHORTS_CACHE_MAX_SIZE) {
@@ -111,23 +110,10 @@ export function parseDurationSeconds(iso8601: string): number {
 /**
  * Check if a video is a YouTube Short by making a HEAD request to the shorts URL.
  *
- * Makes a HEAD request to `https://www.youtube.com/shorts/{videoId}` with
- * `redirect: 'manual'` so we can inspect the status code:
- * - **200** = Short (the `/shorts/` page exists for this video)
- * - **303** = Regular video (YouTube redirects away from `/shorts/`)
- *
- * The request has a {@link HEAD_PROBE_TIMEOUT_MS} timeout via AbortController.
- * On timeout or any network error, the video is **treated as a Short** (fail-safe:
- * the app's primary purpose is to filter Shorts, so we err on the side of removal).
- * Failed results are NOT cached so they'll be retried on subsequent requests.
- *
  * @param videoId - The YouTube video ID to check.
  * @returns `true` if the video is a Short, `false` if it's a regular video (or probe failed).
  */
-export async function isShort(videoId: string): Promise<boolean> {
-	const cached = shortsCache.get(videoId);
-	if (cached !== undefined) return cached;
-
+async function probeIsShort(videoId: string): Promise<boolean> {
 	try {
 		const controller = new AbortController();
 		const timeout = setTimeout(() => controller.abort(), HEAD_PROBE_TIMEOUT_MS);
@@ -145,10 +131,7 @@ export async function isShort(videoId: string): Promise<boolean> {
 		return result;
 	} catch {
 		/* Fail-safe: keep the video on timeout/network error. It's better to
-		 * occasionally show a Short than to hide legitimate videos — especially
-		 * on channels with many short-duration uploads where batch timeouts
-		 * could wipe out entire pages of results.
-		 *
+		 * occasionally show a Short than to hide legitimate videos.
 		 * We do NOT cache this result so it will be retried on the next request. */
 		return false;
 	}
@@ -157,27 +140,19 @@ export async function isShort(videoId: string): Promise<boolean> {
 /**
  * Filter out YouTube Shorts from a list of videos.
  *
- * Applies a two-layer filtering strategy to each video:
+ * Applies a multi-layer filtering strategy:
  *
- * 1. **Duration pre-filter:** Videos with `duration > 180s` are guaranteed not
- *    to be Shorts (YouTube max is 60s, with 180s as a safety margin) and are
- *    kept immediately without any network calls.
- *
- * 2. **Live stream skip:** Videos with `duration === 'P0D'` or duration that
- *    parses to 0 seconds but have views are likely live streams — they are
- *    kept without HEAD probes since live streams are never Shorts.
- *
- * 3. **HEAD probe:** Remaining videos with `duration <= 180s` or no duration
- *    data are checked via {@link isShort}. Probes run in batches of
- *    {@link HEAD_PROBE_CONCURRENCY} to avoid overwhelming the network.
+ * 1. **Duration pre-filter:** Videos with `duration > 180s` are kept immediately.
+ * 2. **Live stream skip:** Zero-duration videos with views are kept (never Shorts).
+ * 3. **L1 cache check:** In-memory Map lookup (same serverless instance).
+ * 4. **L2 cache check:** Batch Redis MGET for all L1 misses (single HTTP call).
+ * 5. **HEAD probe:** Remaining unknowns are probed via HEAD request.
  *
  * @param videos - Array of video items to filter.
  * @returns Array of videos with all detected Shorts removed.
  */
 export async function filterOutShorts(videos: VideoItem[]): Promise<VideoItem[]> {
 	const toCheck: Array<{ video: VideoItem; index: number }> = [];
-
-	/* Build a per-video keep/skip decision array that preserves original order. */
 	const keep: boolean[] = new Array(videos.length).fill(true);
 
 	for (let i = 0; i < videos.length; i++) {
@@ -185,34 +160,80 @@ export async function filterOutShorts(videos: VideoItem[]): Promise<VideoItem[]>
 		const durationSeconds = video.duration ? parseDurationSeconds(video.duration) : 0;
 
 		if (video.duration && durationSeconds > 180) {
-			/* Guaranteed not a Short — keep (already true). */
+			/* Guaranteed not a Short — keep. */
 		} else if (
 			durationSeconds === 0 &&
 			(video.duration === 'P0D' || video.duration === 'PT0S') &&
 			video.viewCount &&
 			video.viewCount !== '0'
 		) {
-			/* Live stream or unparseable duration with views — never a Short, keep. */
+			/* Live stream — keep. */
 		} else {
 			toCheck.push({ video, index: i });
 		}
 	}
 
-	if (toCheck.length > 0) {
-		/* Process HEAD probes in batches to cap concurrency. */
-		const checks: boolean[] = new Array(toCheck.length);
-		for (let i = 0; i < toCheck.length; i += HEAD_PROBE_CONCURRENCY) {
-			const batch = toCheck.slice(i, i + HEAD_PROBE_CONCURRENCY);
-			const batchResults = await Promise.all(batch.map(({ video }) => isShort(video.id)));
+	if (toCheck.length === 0) return videos;
+
+	/* Step 1: Check L1 (in-memory) for all candidates. */
+	const needRedis: Array<{ video: VideoItem; index: number }> = [];
+	for (const entry of toCheck) {
+		const cached = shortsCache.get(entry.video.id);
+		if (cached !== undefined) {
+			if (cached) keep[entry.index] = false;
+		} else {
+			needRedis.push(entry);
+		}
+	}
+
+	/* Step 2: Batch-check Redis (L2) for all L1 misses in a single MGET. */
+	const needProbe: Array<{ video: VideoItem; index: number }> = [];
+	if (needRedis.length > 0) {
+		const redisKeys = needRedis.map((e) => SHORTS_KEY_PREFIX + e.video.id);
+		const redisResults = await redisMGet<boolean>(redisKeys);
+
+		for (let i = 0; i < needRedis.length; i++) {
+			const redisValue = redisResults.get(redisKeys[i]);
+			if (redisValue !== undefined) {
+				/* Promote to L1 */
+				shortsCacheSet(needRedis[i].video.id, redisValue);
+				if (redisValue) keep[needRedis[i].index] = false;
+			} else {
+				needProbe.push(needRedis[i]);
+			}
+		}
+	}
+
+	/* Step 3: HEAD-probe remaining unknowns in batches. */
+	if (needProbe.length > 0) {
+		const probeResults: boolean[] = new Array(needProbe.length);
+		const redisWrites: Array<{ key: string; value: boolean; ttlMs: number }> = [];
+
+		for (let i = 0; i < needProbe.length; i += HEAD_PROBE_CONCURRENCY) {
+			const batch = needProbe.slice(i, i + HEAD_PROBE_CONCURRENCY);
+			const batchResults = await Promise.all(batch.map(({ video }) => probeIsShort(video.id)));
 			for (let j = 0; j < batchResults.length; j++) {
-				checks[i + j] = batchResults[j];
+				probeResults[i + j] = batchResults[j];
 			}
 		}
 
-		for (let i = 0; i < toCheck.length; i++) {
-			if (checks[i]) {
-				keep[toCheck[i].index] = false;
+		for (let i = 0; i < needProbe.length; i++) {
+			if (probeResults[i]) {
+				keep[needProbe[i].index] = false;
 			}
+			/* Write successful probe results to Redis (fire and forget).
+			 * Only cache definitive results (probe didn't timeout). */
+			if (shortsCache.has(needProbe[i].video.id)) {
+				redisWrites.push({
+					key: SHORTS_KEY_PREFIX + needProbe[i].video.id,
+					value: probeResults[i],
+					ttlMs: SHORTS_REDIS_TTL_MS
+				});
+			}
+		}
+
+		if (redisWrites.length > 0) {
+			redisMSet(redisWrites);
 		}
 	}
 
@@ -241,22 +262,18 @@ export function filterOutBrokenVideos(videos: VideoItem[]): VideoItem[] {
 	for (const video of videos) {
 		const reasons: string[] = [];
 
-		// No ID at all
 		if (!video.id) {
 			reasons.push('missing ID');
 		}
 
-		// No title or placeholder deleted/private titles
 		if (!video.title || /^(deleted|private)\s+video$/i.test(video.title.trim())) {
 			reasons.push(`bad title: "${video.title}"`);
 		}
 
-		// No thumbnail
 		if (!video.thumbnailUrl) {
 			reasons.push('no thumbnail');
 		}
 
-		// Zero duration AND zero views — likely a ghost entry
 		const hasZeroDuration =
 			!video.duration || video.duration === 'P0D' || video.duration === 'PT0S';
 		const hasZeroViews = !video.viewCount || video.viewCount === '0';

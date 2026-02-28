@@ -19,7 +19,10 @@ const config = {
 				'frame-src': ['https://www.youtube.com'],
 				'connect-src': ['self'],
 				'font-src': ['self'],
-				'worker-src': ['self']
+				'worker-src': ['self'],
+				'form-action': ['self'],
+				'base-uri': ['self'],
+				'object-src': ['none']
 			}
 		}
 	}

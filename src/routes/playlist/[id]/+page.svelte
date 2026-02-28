@@ -2,21 +2,56 @@
 	@component Playlist Page
 
 	Displays a playlist's metadata (thumbnail, title, channel, video count,
-	description) alongside a numbered list of its videos.
-
-	The numbered list pattern wraps each video in an object with a `number`
-	field (1-indexed) so the VirtualFeed can render a track-number column
-	next to horizontal video cards, similar to YouTube's playlist layout.
+	description) alongside a numbered list of its videos with infinite scroll.
 -->
 <script lang="ts">
 	import VideoCard from '$lib/components/VideoCard.svelte';
 	import VirtualFeed from '$lib/components/VirtualFeed.svelte';
+	import type { VideoItem } from '$lib/types';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 
+	/** Maximum client-side pagination retries when all results are filtered out */
+	const MAX_CLIENT_PAGES = 6;
+
+	let allVideos = $state<VideoItem[]>([]);
+	let nextPageToken = $state<string | undefined>(undefined);
+	let loadingMore = $state(false);
+
+	$effect(() => {
+		allVideos = data.videos;
+		nextPageToken = data.nextPageToken;
+	});
+
 	/* Map videos to numbered entries for the track-number display column */
-	let numberedVideos = $derived(data.videos.map((video, i) => ({ video, number: i + 1 })));
+	let numberedVideos = $derived(allVideos.map((video, i) => ({ video, number: i + 1 })));
+
+	async function loadMore() {
+		if (!nextPageToken || loadingMore) return;
+		loadingMore = true;
+		try {
+			let token: string | undefined = nextPageToken;
+			for (let page = 0; page < MAX_CLIENT_PAGES && token; page++) {
+				const params = new URLSearchParams({
+					source: 'playlist',
+					pageToken: token,
+					playlistId: data.playlist.id
+				});
+				const res: Response = await fetch(`/api/videos?${params}`);
+				if (!res.ok) break;
+				const json: { items: VideoItem[]; nextPageToken?: string } = await res.json();
+				if (json.items.length > 0) {
+					allVideos.push(...json.items);
+				}
+				token = json.nextPageToken;
+				if (json.items.length > 0) break;
+			}
+			nextPageToken = token;
+		} finally {
+			loadingMore = false;
+		}
+	}
 </script>
 
 <svelte:head>
@@ -45,7 +80,14 @@
 	</div>
 
 	<!-- Single-column VirtualFeed with numbered entries resembling YouTube's playlist view -->
-	<VirtualFeed items={numberedVideos} columns={1} gap={12}>
+	<VirtualFeed
+		items={numberedVideos}
+		columns={1}
+		gap={12}
+		hasMore={!!nextPageToken}
+		{loadingMore}
+		onLoadMore={loadMore}
+	>
 		{#snippet children(entry)}
 			<div class="flex items-center gap-3">
 				<!-- Track number column -->

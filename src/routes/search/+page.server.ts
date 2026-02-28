@@ -6,6 +6,9 @@
  * Type filtering is handled client-side for instant chip toggling.
  *
  * Uses streaming so the page renders instantly with skeletons.
+ *
+ * NOTE: No fill-page loop here — search costs 100 quota units per API call,
+ * so we only fetch a single page to conserve quota.
  */
 import type { PageServerLoad } from './$types';
 import type { VideoItem, ChannelItem, PlaylistItem } from '$lib/types';
@@ -24,8 +27,6 @@ async function fetchSearchResults(query: string, pageToken?: string) {
 		pageToken
 	);
 
-	console.log('[SEARCH PAGE] Mixed search returned', rawResults.length, 'results');
-
 	const videoItems = rawResults
 		.filter((r): r is { type: 'video'; item: VideoItem } => r.type === 'video')
 		.map((r) => r.item);
@@ -33,14 +34,6 @@ async function fetchSearchResults(query: string, pageToken?: string) {
 	const cleanVideos = filterOutBrokenVideos(videoItems);
 	const filteredVideos = await filterOutShorts(cleanVideos);
 	const filteredVideoIds = new Set(filteredVideos.map((v) => v.id));
-
-	console.log(
-		'[SEARCH PAGE] After filtering:',
-		filteredVideos.length,
-		'of',
-		videoItems.length,
-		'videos remain'
-	);
 
 	const results: SearchResult[] = [];
 	for (const r of rawResults) {
@@ -53,7 +46,6 @@ async function fetchSearchResults(query: string, pageToken?: string) {
 		}
 	}
 
-	console.log('[SEARCH PAGE] Final results:', results.length);
 	return { results, nextPageToken: nextToken };
 }
 
@@ -61,10 +53,7 @@ export const load: PageServerLoad = async ({ url }) => {
 	const query = url.searchParams.get('q');
 	const pageToken = url.searchParams.get('pageToken') ?? undefined;
 
-	console.log('[SEARCH PAGE] Loading search, query:', query, 'pageToken:', pageToken);
-
 	if (!query) {
-		console.log('[SEARCH PAGE] No query — returning empty results');
 		return { query: '', results: [] as SearchResult[], nextPageToken: undefined };
 	}
 

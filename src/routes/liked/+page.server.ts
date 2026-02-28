@@ -6,29 +6,44 @@
  */
 import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
+import type { VideoItem } from '$lib/types';
 import { getLikedVideos } from '$lib/server/youtube';
 import { filterOutShorts, filterOutBrokenVideos } from '$lib/server/shorts';
 
-async function fetchLikedVideos(accessToken: string) {
-	console.log('[LIKED PAGE] Fetching liked videos');
-	const result = await getLikedVideos(accessToken);
+/** Minimum filtered videos to collect before showing the initial page. */
+const TARGET_INITIAL_VIDEOS = 12;
+/** Maximum API pages to fetch during initial load to prevent runaway usage. */
+const MAX_INITIAL_PAGES = 6;
 
-	console.log('[LIKED PAGE] Liked videos fetched:', result.items.length);
-	const clean = filterOutBrokenVideos(result.items);
-	const filtered = await filterOutShorts(clean);
-	console.log('[LIKED PAGE] After shorts filter:', filtered.length, 'videos remain');
+async function fetchLikedVideos(accessToken: string) {
+	const collected: VideoItem[] = [];
+	let currentToken: string | undefined = undefined;
+
+	for (let page = 0; page < MAX_INITIAL_PAGES; page++) {
+		let result;
+		try {
+			result = await getLikedVideos(accessToken, currentToken);
+		} catch (err) {
+			console.error('[LIKED PAGE] getLikedVideos FAILED:', err);
+			break;
+		}
+
+		const clean = filterOutBrokenVideos(result.items);
+		const filtered = await filterOutShorts(clean);
+		collected.push(...filtered);
+		currentToken = result.pageInfo.nextPageToken;
+
+		if (collected.length >= TARGET_INITIAL_VIDEOS || !currentToken) break;
+	}
 
 	return {
-		videos: filtered,
-		nextPageToken: result.pageInfo.nextPageToken
+		videos: collected,
+		nextPageToken: currentToken
 	};
 }
 
 export const load: PageServerLoad = async ({ locals }) => {
-	console.log('[LIKED PAGE] Loading liked videos, authenticated:', !!locals.session);
-
 	if (!locals.session) {
-		console.log('[LIKED PAGE] No session — redirecting to home');
 		throw redirect(302, '/');
 	}
 

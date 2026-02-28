@@ -27,25 +27,25 @@
 
 	const cols = useColumns();
 
+	/** Maximum client-side pagination retries when all results are filtered out */
+	const MAX_CLIENT_PAGES = 6;
+
 	/* ── Anon trending: infinite scroll state ── */
 	let trendingItems = $state<VideoItem[]>([]);
 	let trendingNextToken = $state<string | undefined>(undefined);
 	let trendingLoading = $state(false);
 
-	/* Reset state when streamed data resolves */
+	/* Track which data promise we're subscribed to, to prevent stale callbacks */
+	let trendingGeneration = 0;
+
 	$effect(() => {
 		if (!data.authenticated && 'streamed' in data && data.streamed.anonData) {
+			const gen = ++trendingGeneration;
 			data.streamed.anonData.then((anonData) => {
+				if (gen !== trendingGeneration) return;
 				trendingItems = anonData.trending ?? [];
 				trendingNextToken = anonData.nextPageToken;
 			});
-		}
-	});
-
-	/* Auto-load if first page was entirely filtered out (e.g. all shorts) */
-	$effect(() => {
-		if (trendingItems.length === 0 && trendingNextToken && !trendingLoading) {
-			loadMoreTrending();
 		}
 	});
 
@@ -53,12 +53,20 @@
 		if (!trendingNextToken || trendingLoading) return;
 		trendingLoading = true;
 		try {
-			let url = `/api/videos?source=trending&pageToken=${encodeURIComponent(trendingNextToken)}`;
-			if (selectedCategory !== '0') url += `&categoryId=${encodeURIComponent(selectedCategory)}`;
-			const res = await fetch(url);
-			const json = await res.json();
-			trendingItems = [...trendingItems, ...json.items];
-			trendingNextToken = json.nextPageToken;
+			let token: string | undefined = trendingNextToken;
+			for (let page = 0; page < MAX_CLIENT_PAGES && token; page++) {
+				let url = `/api/videos?source=trending&pageToken=${encodeURIComponent(token)}`;
+				if (selectedCategory !== '0') url += `&categoryId=${encodeURIComponent(selectedCategory)}`;
+				const res: Response = await fetch(url);
+				if (!res.ok) break;
+				const json: { items: VideoItem[]; nextPageToken?: string } = await res.json();
+				if (json.items.length > 0) {
+					trendingItems.push(...json.items);
+				}
+				token = json.nextPageToken;
+				if (json.items.length > 0) break;
+			}
+			trendingNextToken = token;
 		} finally {
 			trendingLoading = false;
 		}
@@ -69,19 +77,16 @@
 	let subFeedCursor = $state<unknown>(undefined);
 	let authFeedLoading = $state(false);
 
+	let authGeneration = 0;
+
 	$effect(() => {
 		if (data.authenticated && 'streamed' in data && data.streamed.authData) {
+			const gen = ++authGeneration;
 			data.streamed.authData.then((authData) => {
+				if (gen !== authGeneration) return;
 				authFeed = authData.feed ?? [];
 				subFeedCursor = authData.cursor;
 			});
-		}
-	});
-
-	/* Auto-load if first page was entirely filtered out (e.g. all shorts) */
-	$effect(() => {
-		if (authFeed.length === 0 && subFeedCursor && !authFeedLoading) {
-			loadMoreAuthFeed();
 		}
 	});
 
@@ -89,12 +94,20 @@
 		if (!subFeedCursor || authFeedLoading) return;
 		authFeedLoading = true;
 		try {
-			const res = await fetch(
-				`/api/videos?source=subfeed&cursor=${encodeURIComponent(JSON.stringify(subFeedCursor))}`
-			);
-			const json = await res.json();
-			authFeed = [...authFeed, ...json.items];
-			subFeedCursor = json.cursor;
+			let cursor: unknown = subFeedCursor;
+			for (let page = 0; page < MAX_CLIENT_PAGES && cursor; page++) {
+				const res: Response = await fetch(
+					`/api/videos?source=subfeed&cursor=${encodeURIComponent(JSON.stringify(cursor))}`
+				);
+				if (!res.ok) break;
+				const json: { items: VideoItem[]; cursor?: unknown } = await res.json();
+				if (json.items.length > 0) {
+					authFeed.push(...json.items);
+				}
+				cursor = json.cursor;
+				if (json.items.length > 0) break;
+			}
+			subFeedCursor = cursor;
 		} finally {
 			authFeedLoading = false;
 		}

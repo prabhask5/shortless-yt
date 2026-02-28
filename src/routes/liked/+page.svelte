@@ -16,37 +16,45 @@
 
 	const cols = useColumns(3);
 
+	/** Maximum client-side pagination retries when all results are filtered out */
+	const MAX_CLIENT_PAGES = 6;
+
 	/* ── Infinite scroll state ── */
 	let allVideos = $state<VideoItem[]>([]);
 	let nextPageToken = $state<string | undefined>(undefined);
 	let loadingMore = $state(false);
 
+	let generation = 0;
+
 	$effect(() => {
+		const gen = ++generation;
 		data.streamed.likedData.then((likedData) => {
+			if (gen !== generation) return;
 			allVideos = likedData.videos;
 			nextPageToken = likedData.nextPageToken;
 		});
-	});
-
-	/* Auto-load if first page was entirely filtered out (e.g. all shorts) */
-	$effect(() => {
-		if (allVideos.length === 0 && nextPageToken && !loadingMore) {
-			loadMore();
-		}
 	});
 
 	async function loadMore() {
 		if (!nextPageToken || loadingMore) return;
 		loadingMore = true;
 		try {
-			const params = new URLSearchParams({
-				source: 'liked',
-				pageToken: nextPageToken
-			});
-			const res = await fetch(`/api/videos?${params}`);
-			const json = await res.json();
-			allVideos = [...allVideos, ...json.items];
-			nextPageToken = json.nextPageToken;
+			let token: string | undefined = nextPageToken;
+			for (let page = 0; page < MAX_CLIENT_PAGES && token; page++) {
+				const params: Record<string, string> = {
+					source: 'liked',
+					pageToken: token
+				};
+				const res: Response = await fetch(`/api/videos?${new URLSearchParams(params)}`);
+				if (!res.ok) break;
+				const json: { items: VideoItem[]; nextPageToken?: string } = await res.json();
+				if (json.items.length > 0) {
+					allVideos.push(...json.items);
+				}
+				token = json.nextPageToken;
+				if (json.items.length > 0) break;
+			}
+			nextPageToken = token;
 		} finally {
 			loadingMore = false;
 		}
