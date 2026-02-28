@@ -3,28 +3,16 @@
  *
  * Step 1 (blocking): Fetch channel details — needed for banner, profile, and 404 check.
  * Step 2 (streamed): Videos and subscription status load in the background.
- *
- * Supports sort order via `sort` query param: 'recent' (default), 'oldest', 'popular'.
  */
 import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import type { VideoItem } from '$lib/types';
-import {
-	getChannelDetails,
-	getChannelVideos,
-	checkSubscription,
-	searchVideos
-} from '$lib/server/youtube';
+import { getChannelDetails, getChannelVideos, checkSubscription } from '$lib/server/youtube';
 import { filterOutShorts, filterOutBrokenVideos } from '$lib/server/shorts';
 
-async function fetchChannelVideos(channelId: string, sort: string, accessToken?: string) {
-	const videoFetch =
-		sort === 'popular'
-			? searchVideos('', { order: 'viewCount', channelId })
-			: getChannelVideos(channelId);
-
+async function fetchChannelVideos(channelId: string, accessToken?: string) {
 	const [videosResult, isSubscribed] = await Promise.all([
-		videoFetch.catch((err) => {
+		getChannelVideos(channelId).catch((err) => {
 			console.error('[CHANNEL PAGE] video fetch FAILED for', channelId, ':', err);
 			return { items: [] as VideoItem[], pageInfo: { totalResults: 0 } };
 		}),
@@ -35,10 +23,9 @@ async function fetchChannelVideos(channelId: string, sort: string, accessToken?:
 
 	let filteredVideos = filterOutBrokenVideos(videosResult.items);
 	filteredVideos = await filterOutShorts(filteredVideos);
-
-	if (sort === 'oldest') {
-		filteredVideos = filteredVideos.reverse();
-	}
+	filteredVideos.sort(
+		(a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
+	);
 
 	return {
 		videos: filteredVideos,
@@ -48,9 +35,8 @@ async function fetchChannelVideos(channelId: string, sort: string, accessToken?:
 	};
 }
 
-export const load: PageServerLoad = async ({ params, locals, url }) => {
+export const load: PageServerLoad = async ({ params, locals }) => {
 	const channelId = params.id;
-	const sort = (url.searchParams.get('sort') as 'recent' | 'oldest' | 'popular') ?? 'recent';
 
 	let channels;
 	try {
@@ -68,9 +54,8 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 
 	return {
 		channel,
-		sort,
 		streamed: {
-			channelData: fetchChannelVideos(channelId, sort, locals.session?.accessToken)
+			channelData: fetchChannelVideos(channelId, locals.session?.accessToken)
 		}
 	};
 };

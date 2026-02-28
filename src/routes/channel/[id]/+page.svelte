@@ -8,10 +8,8 @@
 <script lang="ts">
 	import VideoCard from '$lib/components/VideoCard.svelte';
 	import VirtualFeed from '$lib/components/VirtualFeed.svelte';
-	import FilterChips from '$lib/components/FilterChips.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import { useColumns } from '$lib/stores/columns.svelte';
-	import { goto } from '$app/navigation';
 	import type { VideoItem } from '$lib/types';
 	import type { PageData } from './$types';
 
@@ -94,17 +92,6 @@
 			return iso;
 		}
 	}
-
-	const sortFilters = [
-		{ label: 'Recent', value: 'recent' },
-		{ label: 'Oldest', value: 'oldest' },
-		{ label: 'Popular', value: 'popular' }
-	];
-
-	function handleSortChange(value: string | string[]) {
-		const sort = Array.isArray(value) ? value[0] : value;
-		goto(`/channel/${data.channel.id}?sort=${sort}`);
-	}
 </script>
 
 <svelte:head>
@@ -174,7 +161,6 @@
 		<div class="mb-3 flex items-center justify-between sm:mb-4">
 			<h2 class="text-yt-text text-base font-medium sm:text-lg">Videos</h2>
 		</div>
-		<FilterChips filters={sortFilters} selected={data.sort} onChange={handleSortChange} />
 		<div class="mt-3 sm:mt-4">
 			{#await data.streamed.channelData}
 				<!-- Video grid skeletons -->
