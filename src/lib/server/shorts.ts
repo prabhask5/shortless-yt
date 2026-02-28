@@ -119,7 +119,7 @@ export function parseDurationSeconds(iso8601: string): number {
  * Failed results are NOT cached so they'll be retried on subsequent requests.
  *
  * @param videoId - The YouTube video ID to check.
- * @returns `true` if the video is a Short (or probe failed), `false` if it's a regular video.
+ * @returns `true` if the video is a Short, `false` if it's a regular video (or probe failed).
  */
 export async function isShort(videoId: string): Promise<boolean> {
 	const cached = shortsCache.get(videoId);
@@ -141,14 +141,13 @@ export async function isShort(videoId: string): Promise<boolean> {
 		shortsCacheSet(videoId, result);
 		return result;
 	} catch {
-		/* Fail-safe: treat as Short on timeout/network error. The primary purpose
-		 * of this application is removing Shorts — it's better to temporarily hide
-		 * a regular short-duration video than to show a Short to the user.
+		/* Fail-safe: keep the video on timeout/network error. It's better to
+		 * occasionally show a Short than to hide legitimate videos — especially
+		 * on channels with many short-duration uploads where batch timeouts
+		 * could wipe out entire pages of results.
 		 *
-		 * We do NOT cache this result so it will be retried on the next request.
-		 * If the video is actually a regular video, it will appear once the probe
-		 * succeeds. */
-		return true;
+		 * We do NOT cache this result so it will be retried on the next request. */
+		return false;
 	}
 }
 
