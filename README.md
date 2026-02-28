@@ -45,6 +45,10 @@ A Chrome/Firefox extension that removes all traces of Shorts from youtube.com. C
 - No data collection, no external requests
 - Works on desktop browsers
 
+## Architecture
+
+See **[ARCHITECTURE.md](ARCHITECTURE.md)** for a detailed system design walkthrough — caching strategy, shorts detection pipeline, auth flow, API quota optimizations, and client-side patterns.
+
 ## Development
 
 ### PWA App
