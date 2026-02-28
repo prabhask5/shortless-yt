@@ -11,6 +11,13 @@
 	--color-yt-border: #3f3f3f;
 }
 
+a,
+button,
+[role='button'],
+summary {
+	cursor: pointer;
+}
+
 html {
 	font-family:
 		'Roboto',

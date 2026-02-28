@@ -82,7 +82,7 @@
 			<div class="mt-2 hidden justify-end lg:flex">
 				<button
 					onclick={toggleTheater}
-					class="bg-yt-surface text-yt-text cursor:pointer flex h-9 w-9 items-center justify-center rounded-full transition-colors hover:brightness-125"
+					class="bg-yt-surface text-yt-text flex h-9 w-9 cursor-pointer items-center justify-center rounded-full transition-colors hover:brightness-125"
 					aria-label={theaterMode ? 'Exit theater mode' : 'Enter theater mode'}
 				>
 					{#if theaterMode}
