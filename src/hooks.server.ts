@@ -166,6 +166,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 					});
 				} catch (err) {
 					console.error('[HOOKS] Token refresh FAILED, clearing session:', err);
+					session = null;
 					event.locals.session = null;
 					event.cookies.delete(SESSION_COOKIE_NAME, { path: '/' });
 				}

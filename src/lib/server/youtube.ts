@@ -990,6 +990,11 @@ export async function getComments(
 	const cached = publicCache.get<PaginatedResult<CommentItem>>(cacheKey);
 	if (cached) return cached;
 
+	const empty: PaginatedResult<CommentItem> = {
+		items: [],
+		pageInfo: { totalResults: 0 }
+	};
+
 	return singleflight(cacheKey, async () => {
 		const params: Record<string, string> = {
 			part: 'snippet',
@@ -999,7 +1004,18 @@ export async function getComments(
 		};
 		if (pageToken) params.pageToken = pageToken;
 
-		const data = (await youtubeApiFetch('commentThreads', params)) as Record<string, unknown>;
+		let data: Record<string, unknown>;
+		try {
+			data = (await youtubeApiFetch('commentThreads', params)) as Record<string, unknown>;
+		} catch (err) {
+			/* Comments disabled on the video — return empty instead of throwing */
+			if (err instanceof Error && err.message.includes('commentsDisabled')) {
+				publicCache.set(cacheKey, empty, THIRTY_MINUTES);
+				return empty;
+			}
+			throw err;
+		}
+
 		const items = (data.items as Record<string, unknown>[]) ?? [];
 		const comments = items.map(parseCommentItem);
 
