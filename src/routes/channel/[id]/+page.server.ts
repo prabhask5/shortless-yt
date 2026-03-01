@@ -25,7 +25,7 @@ async function fetchChannelVideos(channelId: string, accessToken?: string) {
 	while (collected.length < TARGET_INITIAL_VIDEOS && hasMore) {
 		let videosResult;
 		try {
-			videosResult = await getChannelVideos(channelId, currentToken, 50);
+			videosResult = await getChannelVideos(channelId, currentToken);
 		} catch (err) {
 			console.error('[CHANNEL PAGE] video fetch FAILED for', channelId, ':', err);
 			break;

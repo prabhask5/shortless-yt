@@ -29,7 +29,7 @@
 	 * Automatically recomputes when videoId or startTime changes (e.g., chapter click).
 	 */
 	let src = $derived(() => {
-		let url = `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0`;
+		let url = `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&playsinline=1`;
 		if (startTime && startTime > 0) {
 			/* Floor the seconds value to avoid fractional timestamps in the URL */
 			url += `&start=${Math.floor(startTime)}`;

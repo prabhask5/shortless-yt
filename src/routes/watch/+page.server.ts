@@ -37,7 +37,7 @@ async function fetchSidebarData(videoId: string, channelId: string) {
 			console.warn('[WATCH PAGE] getComments FAILED (may be disabled):', err);
 			return emptyComments();
 		}),
-		getChannelVideos(channelId, undefined, 15).catch((err) => {
+		getChannelVideos(channelId).catch((err) => {
 			console.warn('[WATCH PAGE] Channel uploads FAILED:', err);
 			return emptyUploads;
 		})
@@ -50,6 +50,7 @@ async function fetchSidebarData(videoId: string, channelId: string) {
 	return {
 		channel,
 		relatedVideos: relatedFiltered,
+		relatedNextPageToken: channelUploads.pageInfo.nextPageToken,
 		comments: comments.items,
 		commentsNextPageToken: comments.pageInfo.nextPageToken
 	};

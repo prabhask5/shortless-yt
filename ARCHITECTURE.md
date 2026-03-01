@@ -108,21 +108,20 @@ This applies to `searchVideos`, `searchChannels`, `searchPlaylists`, and `search
 
 ### Channel Videos: No Direct API
 
-YouTube has no "list videos by channel" endpoint. `getChannelVideos()` performs three steps:
+YouTube has no "list videos by channel" endpoint. `getChannelVideos()` resolves a channel ID to its uploads playlist ID, then delegates to `getPlaylistVideos()`:
 
-1. Fetch the channel's `contentDetails` to discover its hidden uploads playlist ID (cached for 24h — this never changes)
-2. List `playlistItems` from that uploads playlist
-3. Call `getVideoDetails()` on the resulting video IDs
+1. Resolve channel ID → uploads playlist ID via `getUploadsPlaylistId()` (cached at `ch:uploads:{channelId}` for 24h — this never changes)
+2. Delegate to `getPlaylistVideos(uploadsPlaylistId, pageToken)` which handles `playlistItems` fetch + `getVideoDetails()` hydration
 
-The uploads playlist ID is cached separately (`ch:uploads:{channelId}`) with a 24-hour TTL since it never changes. This saves 1 API call on every repeat channel visit.
+This means channel uploads and explicit playlist pages share the same `plvideos:` cache. Visiting a channel page, watching a video from that channel (sidebar "more from channel"), and browsing the same uploads playlist all hit the same cache entries.
 
 ### Subscription Feed: K-Way Merge
 
 YouTube has no subscription feed API endpoint. We build one manually:
 
 1. Fetch user's subscriptions → up to 15 channel IDs (`SUBFEED_MAX_CHANNELS`)
-2. Fetch each channel's uploads playlist ID in parallel
-3. Fetch the first 5 videos from each channel's uploads playlist in parallel
+2. Fetch each channel's uploads playlist ID in parallel (populates `ch:uploads:{channelId}` cache so subsequent `getChannelVideos()` calls skip the lookup)
+3. Fetch the first 10 videos from each channel's uploads playlist in parallel (small batches keep response payloads light for the merge; the API cost is 1 unit per call regardless of batch size)
 4. **K-way merge:** A min-heap picks the channel whose top buffered video has the most recent `publishedAt`. When a channel's buffer is exhausted, fetch its next page on demand.
 5. After selecting 20 videos, call `getVideoDetails()` on only those 20 IDs — this is quota-efficient because we avoid hydrating videos that were buffered but not selected.
 6. Return a serializable cursor (`SubFeedCursor`: array of `{playlistId, offset}`) for pagination.
@@ -145,7 +144,7 @@ function singleflight<T>(key: string, fn: () => Promise<T>): Promise<T> {
 }
 ```
 
-Applied to: `searchVideos`, `getTrending`, `getChannelVideos`, `getPlaylistVideos`, `getComments`. If two concurrent SSR requests need the same trending page, they share one API call. The entry is cleaned up when the promise settles (success or failure).
+Applied to: `searchVideos`, `getTrending`, `getPlaylistVideos`, `getComments`. If two concurrent SSR requests need the same trending page, they share one API call. The entry is cleaned up when the promise settles (success or failure). `getChannelVideos` benefits transitively — it delegates to `getPlaylistVideos` which has singleflight.
 
 **Trade-off:** If the first caller's request fails, all concurrent waiters also receive the error. This is acceptable because they would have each received the same error independently.
 
@@ -218,12 +217,26 @@ Human-readable, colon-separated, with `encodeURIComponent()` on user-controlled 
 ```
 trending:20:              — trending, category 20, first page
 search:v:cats::medium:    — video search for "cats", medium duration
-video:abc123              — individual video detail
+video:abc123              — individual video detail (shared by all endpoints)
 channel:UC123             — individual channel detail
 ch:uploads:UC123          — uploads playlist ID for a channel
+plvideos:UU...:           — playlist videos (shared by channel page, watch sidebar, playlist page)
 user:subs:<sha256-16>:    — subscriptions keyed by token hash prefix
-short:abc123              — shorts detection result (Redis only)
+short2:abc123             — shorts detection result (Redis only)
 ```
+
+### Cache Unification Strategy
+
+Every API call uses `maxResults` at the YouTube API maximum (50 for most endpoints, 100 for comments) to maximize data per quota unit. Overlapping data paths share cache entries:
+
+| Data                | Shared By                                                  | Cache Key Pattern                   |
+| ------------------- | ---------------------------------------------------------- | ----------------------------------- |
+| Playlist videos     | Channel page, watch sidebar, playlist page, API pagination | `plvideos:{playlistId}:{pageToken}` |
+| Uploads playlist ID | `getChannelVideos`, subscription feed init                 | `ch:uploads:{channelId}`            |
+| Video details       | All endpoints (trending, search, playlist, liked, channel) | `video:{videoId}`                   |
+| Channel details     | Watch page, channel page, search results                   | `channel:{channelId}`               |
+
+`getTrending()` and `getLikedVideos()` populate the per-ID `video:{id}` cache, so videos encountered through trending or liked pages don't need re-fetching when viewed individually.
 
 ---
 
@@ -236,7 +249,7 @@ short:abc123              — shorts detection result (Redis only)
 - **HTTP 200** → the `/shorts/` page exists → it IS a Short
 - **HTTP 303** → YouTube redirects away → it's a regular video
 
-### `filterOutShorts(videos[])` — Five-Layer Pipeline
+### `filterOutShorts(videos[])` — Six-Layer Pipeline
 
 ```
 Input: VideoItem[]
@@ -246,7 +259,12 @@ Layer 1: Duration pre-filter (free, sync)
   │  duration > 180s → keep immediately (Shorts are max 60s)
   │
   ▼
-Layer 1b: Live stream pass-through (free, sync)
+Layer 1b: Short duration removal (free, sync)
+  │  duration ≤ 60s → remove immediately (all Shorts are ≤60s)
+  │  Catches vertical short-form videos that YouTube doesn't classify as Shorts
+  │
+  ▼
+Layer 1c: Live stream pass-through (free, sync)
   │  duration = 0 AND views > 0 → live stream, keep
   │
   ▼
@@ -261,16 +279,17 @@ Layer 3: L2 Redis batch lookup (1 HTTP call, ~1-5ms)
   │
   ▼
 Layer 4: HEAD probes (network, last resort)
-  │  20 concurrent probes, 2s timeout each
+  │  10 concurrent probes, 3s timeout each
+  │  Only 200/303 responses are cached; rate limits (429) are NOT cached
   │  Results cached in L1 + batch-written to Redis (7-day TTL)
   │
   ▼
 Output: VideoItem[] (Shorts removed)
 ```
 
-**Fail-safe:** On probe timeout or network error, the video is **kept** (not removed). It's safer to occasionally show a Short than to hide legitimate content. Failed probes are NOT cached, so they retry on the next request.
+**Fail-safe:** On probe timeout or network error, the video is **kept** (not removed). It's safer to occasionally show a Short than to hide legitimate content. Failed probes and unexpected status codes (429, 403) are NOT cached, so they retry on the next request. This prevents "cache poisoning" where a rate-limited response permanently marks a Short as non-Short.
 
-**Why batch Redis before probing?** On a cold serverless start, L1 is empty. Without L2, every video in a 20-item page would trigger a HEAD probe (~2s each, even with concurrency). With Redis MGET, most videos resolve in a single ~2ms HTTP call, and only truly unknown videos need probing.
+**Why batch Redis before probing?** On a cold serverless start, L1 is empty. Without L2, every video in a 50-item page would trigger a HEAD probe (~3s each, even with concurrency). With Redis MGET, most videos resolve in a single ~2ms HTTP call, and only truly unknown videos need probing.
 
 ---
 
@@ -356,20 +375,21 @@ Each navigation increments the counter. When the promise resolves, it checks if 
 
 ### Fill-Page Loading (Server-Side)
 
-After filtering out Shorts, a single API page might return 0 usable videos (e.g., a channel that posts mostly Shorts). The server loops until it has enough content:
+After filtering out Shorts, a single API page might return 0 usable videos (e.g., a channel that posts mostly Shorts). The server loops until it has enough content or runs out of pages:
 
 ```typescript
 const TARGET_INITIAL_VIDEOS = 12;
-const MAX_INITIAL_PAGES = 6;
 
-for (let page = 0; page < MAX_INITIAL_PAGES; page++) {
+while (collected.length < TARGET_INITIAL_VIDEOS && hasMore) {
 	const result = await getChannelVideos(channelId, currentToken);
 	const filtered = await filterOutShorts(filterOutBrokenVideos(result.items));
 	collected.push(...filtered);
 	currentToken = result.pageInfo.nextPageToken;
-	if (collected.length >= TARGET_INITIAL_VIDEOS || !currentToken) break;
+	hasMore = !!currentToken;
 }
 ```
+
+There is no artificial page limit — the loop continues until enough non-short videos are collected or the channel's uploads are exhausted. This handles Shorts-heavy channels like Vsauce where hundreds of consecutive videos may be Shorts.
 
 **Exception:** Search pages only fetch 1 page because each search call costs 100 quota units (vs 1–3 units for other endpoints).
 

@@ -357,7 +357,7 @@ export async function searchVideos(
 			part: 'snippet',
 			type: 'video',
 			q: query,
-			maxResults: '20'
+			maxResults: '50'
 		};
 		if (options?.pageToken) params.pageToken = options.pageToken;
 		if (options?.videoDuration) params.videoDuration = options.videoDuration;
@@ -408,7 +408,7 @@ export async function searchChannels(
 		part: 'snippet',
 		type: 'channel',
 		q: query,
-		maxResults: '20'
+		maxResults: '50'
 	};
 	if (pageToken) params.pageToken = pageToken;
 
@@ -455,7 +455,7 @@ export async function searchPlaylists(
 		part: 'snippet',
 		type: 'playlist',
 		q: query,
-		maxResults: '20'
+		maxResults: '50'
 	};
 	if (pageToken) params.pageToken = pageToken;
 
@@ -537,7 +537,7 @@ export async function searchMixed(
 		part: 'snippet',
 		type: typeStr,
 		q: query,
-		maxResults: '25'
+		maxResults: '50'
 	};
 	if (pageToken) params.pageToken = pageToken;
 
@@ -835,80 +835,47 @@ export async function getPlaylistDetails(ids: string[]): Promise<PlaylistItem[]>
  */
 export async function getChannelVideos(
 	channelId: string,
-	pageToken?: string,
-	maxResults: number = 20
+	pageToken?: string
 ): Promise<PaginatedResult<VideoItem>> {
-	const cacheKey = `chvideos:${channelId}:${pageToken ?? ''}:${maxResults}`;
-	const cached = publicCache.get<PaginatedResult<VideoItem>>(cacheKey);
-	if (cached) return cached;
+	// Step 1: Resolve channel ID → uploads playlist ID (cached for 24h)
+	const uploadsPlaylistId = await getUploadsPlaylistId(channelId);
+	if (!uploadsPlaylistId) {
+		return { items: [], pageInfo: { totalResults: 0 } };
+	}
 
-	return singleflight(cacheKey, async () => {
-		// Step 1: Get channel's uploads playlist ID (cached separately to skip on repeat calls)
-		const uploadsCacheKey = `ch:uploads:${channelId}`;
-		let uploadsPlaylistId = publicCache.get<string>(uploadsCacheKey);
-		if (!uploadsPlaylistId) {
-			uploadsPlaylistId =
-				(await publicCache.getWithRedis<string>(uploadsCacheKey, ONE_DAY)) ?? undefined;
-		}
-		if (!uploadsPlaylistId) {
-			const channelData = (await youtubeApiFetch('channels', {
-				part: 'contentDetails',
-				id: channelId
-			})) as Record<string, unknown>;
+	// Step 2: Delegate to getPlaylistVideos (shared cache with playlist pages)
+	return getPlaylistVideos(uploadsPlaylistId, pageToken);
+}
 
-			const channelItems = (channelData.items as Record<string, unknown>[]) ?? [];
-			if (channelItems.length === 0) {
-				return { items: [], pageInfo: { totalResults: 0 } };
-			}
+/**
+ * Resolve a channel ID to its uploads playlist ID, with L1/L2 caching.
+ * Used by {@link getChannelVideos} and populated by {@link getSubscriptionFeed}.
+ */
+async function getUploadsPlaylistId(channelId: string): Promise<string | undefined> {
+	const cacheKey = `ch:uploads:${channelId}`;
+	let playlistId = publicCache.get<string>(cacheKey);
+	if (playlistId) return playlistId;
 
-			const contentDetails = channelItems[0].contentDetails as Record<string, unknown>;
-			const relatedPlaylists = contentDetails?.relatedPlaylists as Record<string, string>;
-			uploadsPlaylistId = relatedPlaylists?.uploads;
+	playlistId = (await publicCache.getWithRedis<string>(cacheKey, ONE_DAY)) ?? undefined;
+	if (playlistId) return playlistId;
 
-			if (!uploadsPlaylistId) {
-				return { items: [], pageInfo: { totalResults: 0 } };
-			}
+	const channelData = (await youtubeApiFetch('channels', {
+		part: 'contentDetails',
+		id: channelId
+	})) as Record<string, unknown>;
 
-			publicCache.set(uploadsCacheKey, uploadsPlaylistId, ONE_DAY);
-		}
+	const channelItems = (channelData.items as Record<string, unknown>[]) ?? [];
+	if (channelItems.length === 0) return undefined;
 
-		// Step 2: Get playlist items
-		const params: Record<string, string> = {
-			part: 'snippet',
-			playlistId: uploadsPlaylistId,
-			maxResults: String(maxResults)
-		};
-		if (pageToken) params.pageToken = pageToken;
+	const contentDetails = channelItems[0].contentDetails as Record<string, unknown>;
+	const relatedPlaylists = contentDetails?.relatedPlaylists as Record<string, string>;
+	playlistId = relatedPlaylists?.uploads;
 
-		const playlistData = (await youtubeApiFetch('playlistItems', params)) as Record<
-			string,
-			unknown
-		>;
-		const playlistItems = (playlistData.items as Record<string, unknown>[]) ?? [];
+	if (playlistId) {
+		publicCache.set(cacheKey, playlistId, ONE_DAY);
+	}
 
-		const videoIds = playlistItems
-			.map((i) => {
-				const snippet = i.snippet as Record<string, unknown> | undefined;
-				const resourceId = snippet?.resourceId as Record<string, string> | undefined;
-				return resourceId?.videoId ?? '';
-			})
-			.filter(Boolean);
-
-		// Step 3: Get full video details
-		const videos = videoIds.length > 0 ? await getVideoDetails(videoIds) : [];
-
-		const pageInfoRaw = playlistData.pageInfo as Record<string, unknown> | undefined;
-		const result: PaginatedResult<VideoItem> = {
-			items: videos,
-			pageInfo: {
-				nextPageToken: playlistData.nextPageToken as string | undefined,
-				totalResults: (pageInfoRaw?.totalResults as number) ?? 0
-			}
-		};
-
-		publicCache.set(cacheKey, result, THIRTY_MINUTES);
-		return result;
-	});
+	return playlistId;
 }
 
 // ===================================================================
@@ -939,7 +906,7 @@ export async function getTrending(
 			part: 'snippet,contentDetails,statistics',
 			chart: 'mostPopular',
 			regionCode: 'US',
-			maxResults: '20'
+			maxResults: '50'
 		};
 		if (categoryId) params.videoCategoryId = categoryId;
 		if (pageToken) params.pageToken = pageToken;
@@ -947,6 +914,11 @@ export async function getTrending(
 		const data = (await youtubeApiFetch('videos', params)) as Record<string, unknown>;
 		const items = (data.items as Record<string, unknown>[]) ?? [];
 		const videos = items.map(parseVideoItem);
+
+		// Populate per-ID video cache so getVideoDetails() can skip re-fetching these
+		for (const video of videos) {
+			publicCache.set(`video:${video.id}`, video, ONE_HOUR);
+		}
 
 		const pageInfoRaw = data.pageInfo as Record<string, unknown> | undefined;
 		const result: PaginatedResult<VideoItem> = {
@@ -1023,7 +995,7 @@ export async function getComments(
 			part: 'snippet',
 			videoId,
 			order: 'relevance',
-			maxResults: '20'
+			maxResults: '100'
 		};
 		if (pageToken) params.pageToken = pageToken;
 
@@ -1066,7 +1038,7 @@ export async function getCommentReplies(
 	const params: Record<string, string> = {
 		part: 'snippet',
 		parentId: commentId,
-		maxResults: '20'
+		maxResults: '100'
 	};
 	if (pageToken) params.pageToken = pageToken;
 
@@ -1152,7 +1124,7 @@ export async function getPlaylistVideos(
 		const params: Record<string, string> = {
 			part: 'snippet',
 			playlistId,
-			maxResults: '20'
+			maxResults: '50'
 		};
 		if (pageToken) params.pageToken = pageToken;
 
@@ -1209,7 +1181,7 @@ export async function getSubscriptions(
 	const params: Record<string, string> = {
 		part: 'snippet',
 		mine: 'true',
-		maxResults: '20',
+		maxResults: '50',
 		order: 'alphabetical'
 	};
 	if (pageToken) params.pageToken = pageToken;
@@ -1303,13 +1275,18 @@ export async function getLikedVideos(
 	const params: Record<string, string> = {
 		part: 'snippet,contentDetails,statistics',
 		myRating: 'like',
-		maxResults: '20'
+		maxResults: '50'
 	};
 	if (pageToken) params.pageToken = pageToken;
 
 	const data = (await youtubeApiFetch('videos', params, accessToken)) as Record<string, unknown>;
 	const items = (data.items as Record<string, unknown>[]) ?? [];
 	const videos = items.map(parseVideoItem);
+
+	// Populate per-ID video cache so getVideoDetails() can skip re-fetching these
+	for (const video of videos) {
+		publicCache.set(`video:${video.id}`, video, ONE_HOUR);
+	}
 
 	const pageInfoRaw = data.pageInfo as Record<string, unknown> | undefined;
 	const result: PaginatedResult<VideoItem> = {
@@ -1342,7 +1319,7 @@ export async function getUserPlaylists(
 	const params: Record<string, string> = {
 		part: 'snippet,contentDetails',
 		mine: 'true',
-		maxResults: '20'
+		maxResults: '50'
 	};
 	if (pageToken) params.pageToken = pageToken;
 
@@ -1383,7 +1360,7 @@ export async function getUserPlaylists(
 // ===================================================================
 
 /** How many playlist items to fetch per channel per batch. */
-const SUBFEED_BATCH_SIZE = 5;
+const SUBFEED_BATCH_SIZE = 10;
 /** How many videos to return per page of the subscription feed. */
 const SUBFEED_PAGE_SIZE = 20;
 /** Maximum number of subscribed channels to include in the feed. */
@@ -1518,7 +1495,12 @@ export async function getSubscriptionFeed(
 			for (const ch of channelItems) {
 				const cd = ch.contentDetails as Record<string, unknown> | undefined;
 				const rp = cd?.relatedPlaylists as Record<string, string> | undefined;
-				if (rp?.uploads) playlistIds.push(rp.uploads);
+				const chId = (ch.id as string) ?? '';
+				if (rp?.uploads) {
+					playlistIds.push(rp.uploads);
+					// Populate per-channel uploads cache so getChannelVideos() can skip the lookup
+					if (chId) publicCache.set(`ch:uploads:${chId}`, rp.uploads, ONE_DAY);
+				}
 			}
 
 			userCache.set(cacheKey, playlistIds, THIRTY_MINUTES);

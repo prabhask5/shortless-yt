@@ -10,8 +10,9 @@
 	import VideoChapters from '$lib/components/VideoChapters.svelte';
 	import CommentSection from '$lib/components/CommentSection.svelte';
 	import VideoCard from '$lib/components/VideoCard.svelte';
+	import VirtualFeed from '$lib/components/VirtualFeed.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
-	import type { CommentItem } from '$lib/types';
+	import type { CommentItem, VideoItem } from '$lib/types';
 	import { onMount } from 'svelte';
 	import type { PageData } from './$types';
 
@@ -35,8 +36,15 @@
 
 	/** Client-side comment pagination state — initialized when streamed data resolves */
 	let comments = $state<CommentItem[]>([]);
-	let nextPageToken = $state<string | undefined>(undefined);
+	let commentsNextPageToken = $state<string | undefined>(undefined);
 	let loadingMoreComments = $state(false);
+
+	/** Related videos (more from this channel) pagination state */
+	let relatedVideos = $state<VideoItem[]>([]);
+	let relatedNextPageToken = $state<string | undefined>(undefined);
+	let loadingMoreRelated = $state(false);
+	/** Channel ID for related video pagination */
+	let relatedChannelId = $state<string>('');
 
 	let sidebarGeneration = 0;
 
@@ -46,17 +54,20 @@
 			data.streamed.sidebarData.then((sidebar) => {
 				if (gen !== sidebarGeneration) return;
 				comments = sidebar.comments;
-				nextPageToken = sidebar.commentsNextPageToken;
+				commentsNextPageToken = sidebar.commentsNextPageToken;
+				relatedVideos = sidebar.relatedVideos;
+				relatedNextPageToken = sidebar.relatedNextPageToken;
+				relatedChannelId = data.video.channelId;
 			});
 		}
 	});
 
 	async function loadMoreComments() {
-		if (!nextPageToken || loadingMoreComments) return;
+		if (!commentsNextPageToken || loadingMoreComments) return;
 		loadingMoreComments = true;
 		try {
 			const res = await fetch(
-				`/api/comments?videoId=${encodeURIComponent(data.video.id)}&pageToken=${encodeURIComponent(nextPageToken)}`
+				`/api/comments?videoId=${encodeURIComponent(data.video.id)}&pageToken=${encodeURIComponent(commentsNextPageToken)}`
 			);
 			if (res.ok) {
 				const result = (await res.json()) as {
@@ -64,10 +75,31 @@
 					nextPageToken?: string;
 				};
 				comments.push(...result.comments);
-				nextPageToken = result.nextPageToken;
+				commentsNextPageToken = result.nextPageToken;
 			}
 		} finally {
 			loadingMoreComments = false;
+		}
+	}
+
+	async function loadMoreRelated() {
+		if (!relatedNextPageToken || loadingMoreRelated || !relatedChannelId) return;
+		loadingMoreRelated = true;
+		try {
+			const params = new URLSearchParams({
+				source: 'channel',
+				pageToken: relatedNextPageToken,
+				channelId: relatedChannelId
+			});
+			const res = await fetch(`/api/videos?${params}`);
+			if (res.ok) {
+				const json = (await res.json()) as { items: VideoItem[]; nextPageToken?: string };
+				const filtered = json.items.filter((v) => v.id !== data.video.id);
+				relatedVideos.push(...filtered);
+				relatedNextPageToken = json.nextPageToken;
+			}
+		} finally {
+			loadingMoreRelated = false;
 		}
 	}
 </script>
@@ -80,8 +112,11 @@
 <div class="mx-auto px-4 py-4 {theaterMode ? 'max-w-full' : 'max-w-screen-xl'}">
 	<div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
 		<div class={theaterMode ? 'lg:col-span-3' : 'lg:col-span-2'}>
-			<!-- Video player renders immediately (blocking data) -->
-			<VideoPlayer videoId={data.video.id} startTime={playerStartTime} />
+			<!-- Video player renders immediately (blocking data) — keyed to force
+				 iframe recreation on navigation so autoplay triggers reliably -->
+			{#key data.video.id}
+				<VideoPlayer videoId={data.video.id} startTime={playerStartTime} />
+			{/key}
 
 			<!-- Theater mode toggle (desktop only) -->
 			<div class="mt-2 hidden justify-end lg:flex">
@@ -165,7 +200,7 @@
 					{comments}
 					loading={loadingMoreComments}
 					onLoadMore={loadMoreComments}
-					hasMore={!!nextPageToken}
+					hasMore={!!commentsNextPageToken}
 				/>
 			{:catch}
 				<VideoDetails
@@ -195,13 +230,22 @@
 					</div>
 				{/each}
 			</aside>
-		{:then sidebar}
-			{#if sidebar.relatedVideos && sidebar.relatedVideos.length > 0}
+		{:then _sidebar}
+			{#if relatedVideos.length > 0}
 				<aside class="flex flex-col gap-3 {theaterMode ? 'lg:col-span-3' : ''}">
 					<h2 class="text-yt-text text-base font-medium">More from this channel</h2>
-					{#each sidebar.relatedVideos.slice(0, 15) as video (video.id)}
-						<VideoCard {video} layout="horizontal" />
-					{/each}
+					<VirtualFeed
+						items={relatedVideos}
+						columns={1}
+						gap={12}
+						hasMore={!!relatedNextPageToken}
+						loadingMore={loadingMoreRelated}
+						onLoadMore={loadMoreRelated}
+					>
+						{#snippet children(video)}
+							<VideoCard {video} layout="horizontal" />
+						{/snippet}
+					</VirtualFeed>
 				</aside>
 			{/if}
 		{:catch}

@@ -35,10 +35,12 @@
 	/** Whether the mobile-only full-width search view is open */
 	let mobileSearchOpen = $state(false);
 
-	/* Close mobile search on navigation (query prop changes when navigating away from search) */
+	/* Close mobile search when navigating away from search (query becomes empty).
+	 * Keep it open when navigating TO search results (query has a value). */
 	$effect(() => {
-		void query;
-		mobileSearchOpen = false;
+		if (!query) {
+			mobileSearchOpen = false;
+		}
 	});
 	/** Whether the user avatar dropdown menu is visible */
 	let userMenuOpen = $state(false);
