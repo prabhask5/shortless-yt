@@ -52,3 +52,20 @@ html.light {
 	--color-yt-text-secondary: #606060;
 	--color-yt-border: #e5e5e5;
 }
+
+/* CSS portrait lock fallback for devices where screen.orientation.lock() is
+   unsupported (iOS). Counter-rotates the page so content stays portrait-oriented
+   even when the device is held in landscape. Does not fire when a native
+   fullscreen element is active (e.g. YouTube player fullscreen). */
+@media (orientation: landscape) and (max-height: 500px) {
+	html:not(:has(:fullscreen)) {
+		transform: rotate(-90deg);
+		transform-origin: top left;
+		width: 100vh;
+		height: 100vw;
+		position: fixed;
+		top: 100%;
+		left: 0;
+		overflow: auto;
+	}
+}

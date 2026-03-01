@@ -22,8 +22,17 @@
 	import { page } from '$app/stores';
 	import { navigating } from '$app/stores';
 	import { invalidateAll } from '$app/navigation';
+	import { onMount } from 'svelte';
 
 	let { children } = $props();
+
+	// Lock orientation to portrait (works on Android PWA; silently fails elsewhere)
+	onMount(() => {
+		const orientation = screen.orientation as ScreenOrientation & {
+			lock?: (o: string) => Promise<void>;
+		};
+		orientation.lock?.('portrait')?.catch(() => {});
+	});
 
 	// Keep the Header search bar in sync with the current `q` query param
 	let query = $derived($page.url.searchParams.get('q') ?? '');
