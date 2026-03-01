@@ -201,6 +201,7 @@
 					loading={loadingMoreComments}
 					onLoadMore={loadMoreComments}
 					hasMore={!!commentsNextPageToken}
+					mobileLimit={10}
 				/>
 			{:catch}
 				<VideoDetails

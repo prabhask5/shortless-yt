@@ -13,18 +13,39 @@
 	 * - Empty: shows "No comments yet" message
 	 */
 	import type { CommentItem } from '$lib/types';
+	import { onMount } from 'svelte';
 
 	let {
 		comments,
 		loading,
 		onLoadMore,
-		hasMore
+		hasMore,
+		mobileLimit = 0
 	}: {
 		comments: CommentItem[];
 		loading: boolean;
 		onLoadMore: () => void;
 		hasMore: boolean;
+		mobileLimit?: number;
 	} = $props();
+
+	let mobileExpanded = $state(false);
+	let isMobile = $state(false);
+
+	onMount(() => {
+		const mq = window.matchMedia('(max-width: 1023px)');
+		isMobile = mq.matches;
+		const handler = (e: MediaQueryListEvent) => (isMobile = e.matches);
+		mq.addEventListener('change', handler);
+		return () => mq.removeEventListener('change', handler);
+	});
+
+	let visibleComments = $derived(
+		mobileLimit > 0 && isMobile && !mobileExpanded ? comments.slice(0, mobileLimit) : comments
+	);
+	let hiddenCount = $derived(
+		mobileLimit > 0 && isMobile && !mobileExpanded ? Math.max(0, comments.length - mobileLimit) : 0
+	);
 
 	/** Track which comment threads have their replies expanded */
 	let expandedReplies = $state<
@@ -136,7 +157,7 @@
 <div class="flex flex-col gap-4 py-4">
 	<h3 class="text-yt-text text-base font-medium">Comments</h3>
 
-	{#each comments as comment (comment.id)}
+	{#each visibleComments as comment (comment.id)}
 		<div class="flex gap-3">
 			<img
 				src={comment.authorAvatarUrl}
@@ -240,6 +261,15 @@
 		</div>
 	{/each}
 
+	{#if hiddenCount > 0}
+		<button
+			onclick={() => (mobileExpanded = true)}
+			class="border-yt-border text-yt-accent hover:bg-yt-surface w-full rounded-full border py-2 text-sm font-medium"
+		>
+			Show {hiddenCount} more comment{hiddenCount === 1 ? '' : 's'}
+		</button>
+	{/if}
+
 	{#if loading}
 		<div class="flex justify-center py-4">
 			<div
@@ -248,7 +278,7 @@
 		</div>
 	{/if}
 
-	{#if hasMore && !loading}
+	{#if hasMore && !loading && hiddenCount === 0}
 		<button
 			onclick={onLoadMore}
 			class="border-yt-border text-yt-accent hover:bg-yt-surface w-full rounded-full border py-2 text-sm font-medium"
