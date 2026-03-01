@@ -12,8 +12,14 @@
 		This app uses the YouTube Data API v3 to fetch and display content. All video playback happens
 		through YouTube's official embed player. We do not host or modify any video content.
 	</p>
-	<p class="text-yt-text-secondary">
+	<p class="text-yt-text-secondary mb-4">
 		Sign in with your Google account to access your subscriptions and liked videos. We only request
 		read-only access to your YouTube data and never modify your account.
+	</p>
+	<p class="text-yt-text-secondary">
+		By using this app, you agree to our
+		<a href="/terms" class="text-blue-400 hover:underline">Terms of Service</a>
+		and
+		<a href="/privacy" class="text-blue-400 hover:underline">Privacy Policy</a>.
 	</p>
 </div>
