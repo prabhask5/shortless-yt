@@ -913,7 +913,7 @@ export async function getTrending(
 
 		const data = (await youtubeApiFetch('videos', params)) as Record<string, unknown>;
 		const items = (data.items as Record<string, unknown>[]) ?? [];
-		const videos = items.map(parseVideoItem);
+		const videos = items.map(parseVideoItem).filter((v) => v.liveBroadcastContent !== 'upcoming');
 
 		// Populate per-ID video cache so getVideoDetails() can skip re-fetching these
 		for (const video of videos) {
