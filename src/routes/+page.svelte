@@ -14,6 +14,7 @@
 	import ChannelBar from '$lib/components/ChannelBar.svelte';
 	import CategoryChips from '$lib/components/CategoryChips.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
+	import SlowLoadNotice from '$lib/components/SlowLoadNotice.svelte';
 	import { useColumns } from '$lib/stores/columns.svelte';
 	import { goto } from '$app/navigation';
 	import type { VideoItem } from '$lib/types';
@@ -34,17 +35,20 @@
 	let trendingItems = $state<VideoItem[]>([]);
 	let trendingNextToken = $state<string | undefined>(undefined);
 	let trendingLoading = $state(false);
+	let trendingInitialLoading = $state(true);
 
 	/* Track which data promise we're subscribed to, to prevent stale callbacks */
 	let trendingGeneration = 0;
 
 	$effect(() => {
 		if (!data.authenticated && 'streamed' in data && data.streamed.anonData) {
+			trendingInitialLoading = true;
 			const gen = ++trendingGeneration;
 			data.streamed.anonData.then((anonData) => {
 				if (gen !== trendingGeneration) return;
 				trendingItems = anonData.trending ?? [];
 				trendingNextToken = anonData.nextPageToken;
+				trendingInitialLoading = false;
 			});
 		}
 	});
@@ -76,16 +80,19 @@
 	let authFeed = $state<VideoItem[]>([]);
 	let subFeedCursor = $state<unknown>(undefined);
 	let authFeedLoading = $state(false);
+	let authInitialLoading = $state(true);
 
 	let authGeneration = 0;
 
 	$effect(() => {
 		if (data.authenticated && 'streamed' in data && data.streamed.authData) {
+			authInitialLoading = true;
 			const gen = ++authGeneration;
 			data.streamed.authData.then((authData) => {
 				if (gen !== authGeneration) return;
 				authFeed = authData.feed ?? [];
 				subFeedCursor = authData.cursor;
+				authInitialLoading = false;
 			});
 		}
 	});
@@ -237,3 +244,9 @@
 		{/await}
 	{/if}
 </div>
+
+<SlowLoadNotice
+	visible={data.authenticated
+		? authInitialLoading || authFeedLoading
+		: trendingInitialLoading || trendingLoading}
+/>

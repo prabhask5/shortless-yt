@@ -13,6 +13,7 @@
 	import VirtualFeed from '$lib/components/VirtualFeed.svelte';
 	import FilterChips from '$lib/components/FilterChips.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
+	import SlowLoadNotice from '$lib/components/SlowLoadNotice.svelte';
 	import type { PageData } from './$types';
 	import type { SearchResult } from './+page.server';
 
@@ -148,3 +149,5 @@
 		</div>
 	{/if}
 </div>
+
+<SlowLoadNotice visible={isLoading || loadingMore} />

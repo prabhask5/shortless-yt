@@ -9,6 +9,7 @@
 	import VideoCard from '$lib/components/VideoCard.svelte';
 	import VirtualFeed from '$lib/components/VirtualFeed.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
+	import SlowLoadNotice from '$lib/components/SlowLoadNotice.svelte';
 	import { useColumns } from '$lib/stores/columns.svelte';
 	import type { VideoItem } from '$lib/types';
 	import type { PageData } from './$types';
@@ -25,15 +26,18 @@
 	let allVideos = $state<VideoItem[]>([]);
 	let nextPageToken = $state<string | undefined>(undefined);
 	let loadingMore = $state(false);
+	let initialLoading = $state(true);
 
 	let generation = 0;
 
 	$effect(() => {
+		initialLoading = true;
 		const gen = ++generation;
 		data.streamed.channelData.then((channelData) => {
 			if (gen !== generation) return;
 			allVideos = channelData.videos;
 			nextPageToken = channelData.nextPageToken;
+			initialLoading = false;
 		});
 	});
 
@@ -200,6 +204,8 @@
 		</div>
 	</div>
 </div>
+
+<SlowLoadNotice visible={initialLoading || loadingMore} />
 
 <!-- About channel modal -->
 {#if showAboutModal}

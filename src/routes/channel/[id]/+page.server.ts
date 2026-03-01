@@ -12,8 +12,6 @@ import { filterOutShorts, filterOutBrokenVideos } from '$lib/server/shorts';
 
 /** Minimum number of non-short videos to collect before showing the initial page. */
 const TARGET_INITIAL_VIDEOS = 12;
-/** Maximum API pages to fetch during initial load to prevent runaway usage. */
-const MAX_INITIAL_PAGES = 6;
 
 async function fetchChannelVideos(channelId: string, accessToken?: string) {
 	const isSubscribedPromise = accessToken
@@ -21,12 +19,13 @@ async function fetchChannelVideos(channelId: string, accessToken?: string) {
 		: Promise.resolve(false);
 
 	const collected: VideoItem[] = [];
+	let hasMore = true;
 	let currentToken: string | undefined = undefined;
 
-	for (let page = 0; page < MAX_INITIAL_PAGES; page++) {
+	while (collected.length < TARGET_INITIAL_VIDEOS && hasMore) {
 		let videosResult;
 		try {
-			videosResult = await getChannelVideos(channelId, currentToken);
+			videosResult = await getChannelVideos(channelId, currentToken, 50);
 		} catch (err) {
 			console.error('[CHANNEL PAGE] video fetch FAILED for', channelId, ':', err);
 			break;
@@ -35,14 +34,8 @@ async function fetchChannelVideos(channelId: string, accessToken?: string) {
 		let filtered = filterOutBrokenVideos(videosResult.items);
 		filtered = await filterOutShorts(filtered);
 		collected.push(...filtered);
-
-		const nextToken =
-			'nextPageToken' in videosResult.pageInfo
-				? (videosResult.pageInfo.nextPageToken as string | undefined)
-				: undefined;
-		currentToken = nextToken;
-
-		if (collected.length >= TARGET_INITIAL_VIDEOS || !currentToken) break;
+		currentToken = videosResult.pageInfo.nextPageToken;
+		hasMore = !!currentToken;
 	}
 
 	collected.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());

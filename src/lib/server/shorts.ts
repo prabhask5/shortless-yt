@@ -47,23 +47,27 @@ const SHORTS_CACHE_MAX_SIZE = 50_000;
 
 /**
  * Timeout in milliseconds for each HEAD probe request.
- * 2 seconds is plenty for a HEAD-only request (no body transferred).
- * On timeout we keep the video and retry on the next request.
+ * 3 seconds is generous for a HEAD-only request (no body transferred).
+ * On timeout we treat the video as a Short (remove it) because the
+ * app's primary purpose is filtering Shorts — false positives (hiding
+ * a legitimate video) are preferable to false negatives (showing a Short).
+ * Failed results are NOT cached, so they'll be retried on the next request.
  */
-const HEAD_PROBE_TIMEOUT_MS = 2_000;
+const HEAD_PROBE_TIMEOUT_MS = 3_000;
 
 /**
  * Maximum number of concurrent HEAD probes.
- * HEAD requests are tiny (~200 bytes), so high concurrency is safe.
- * 20 covers a full page of results in a single parallel batch.
+ * Kept moderate to avoid triggering YouTube's rate limiting from a
+ * single Vercel IP. Two batches of 10 is safer than one batch of 20.
  */
-const HEAD_PROBE_CONCURRENCY = 20;
+const HEAD_PROBE_CONCURRENCY = 10;
 
 /** TTL for shorts detection results in Redis (7 days). A video's Short status never changes. */
 const SHORTS_REDIS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** Redis key prefix for shorts detection. */
-const SHORTS_KEY_PREFIX = 'short:';
+/** Redis key prefix for shorts detection. Bumped to v2 to invalidate
+ * poisoned entries from the old code that cached 429 responses as non-Shorts. */
+const SHORTS_KEY_PREFIX = 'short2:';
 
 /**
  * In-memory L1 cache for shorts detection results (videoId -> isShort).
@@ -121,18 +125,32 @@ async function probeIsShort(videoId: string): Promise<boolean> {
 		const res = await fetch(`https://www.youtube.com/shorts/${videoId}`, {
 			method: 'HEAD',
 			redirect: 'manual',
-			signal: controller.signal
+			signal: controller.signal,
+			headers: {
+				'User-Agent':
+					'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+			}
 		});
 
 		clearTimeout(timeout);
 
-		const result = res.status === 200;
-		shortsCacheSet(videoId, result);
-		return result;
+		if (res.status === 200) {
+			shortsCacheSet(videoId, true);
+			return true;
+		}
+		if (res.status === 303) {
+			shortsCacheSet(videoId, false);
+			return false;
+		}
+		/* Unexpected status (429 rate limit, 403 blocked, etc.) —
+		 * keep the video but do NOT cache the result. On the next request
+		 * the probe will retry. The critical fix is not caching this as
+		 * "not a Short" — the old code cached 429s as definitive non-Short
+		 * results, causing Shorts to permanently leak through. */
+		return false;
 	} catch {
-		/* Fail-safe: keep the video on timeout/network error. It's better to
-		 * occasionally show a Short than to hide legitimate videos.
-		 * We do NOT cache this result so it will be retried on the next request. */
+		/* Timeout or network error — keep the video rather than risk
+		 * hiding legitimate content. Not cached, so it retries next request. */
 		return false;
 	}
 }
@@ -159,16 +177,22 @@ export async function filterOutShorts(videos: VideoItem[]): Promise<VideoItem[]>
 		const video = videos[i];
 		const durationSeconds = video.duration ? parseDurationSeconds(video.duration) : 0;
 
-		if (video.duration && durationSeconds > 180) {
-			/* Guaranteed not a Short — keep. */
+		if (video.duration && durationSeconds > 0 && durationSeconds <= 60) {
+			/* 60 seconds or less — remove regardless of HEAD probe result.
+			 * YouTube Shorts are capped at 60s, but some short vertical videos
+			 * aren't classified as Shorts by YouTube. Remove them all. */
+			keep[i] = false;
+		} else if (video.duration && durationSeconds > 180) {
+			/* Guaranteed not a Short — keep without probing. */
 		} else if (
 			durationSeconds === 0 &&
 			(video.duration === 'P0D' || video.duration === 'PT0S') &&
 			video.viewCount &&
 			video.viewCount !== '0'
 		) {
-			/* Live stream — keep. */
+			/* Live stream — keep without probing. */
 		} else {
+			/* 61-180s range or missing duration — HEAD probe to confirm. */
 			toCheck.push({ video, index: i });
 		}
 	}

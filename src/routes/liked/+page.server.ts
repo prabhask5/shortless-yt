@@ -12,14 +12,13 @@ import { filterOutShorts, filterOutBrokenVideos } from '$lib/server/shorts';
 
 /** Minimum filtered videos to collect before showing the initial page. */
 const TARGET_INITIAL_VIDEOS = 12;
-/** Maximum API pages to fetch during initial load to prevent runaway usage. */
-const MAX_INITIAL_PAGES = 6;
 
 async function fetchLikedVideos(accessToken: string) {
 	const collected: VideoItem[] = [];
+	let hasMore = true;
 	let currentToken: string | undefined = undefined;
 
-	for (let page = 0; page < MAX_INITIAL_PAGES; page++) {
+	while (collected.length < TARGET_INITIAL_VIDEOS && hasMore) {
 		let result;
 		try {
 			result = await getLikedVideos(accessToken, currentToken);
@@ -32,8 +31,7 @@ async function fetchLikedVideos(accessToken: string) {
 		const filtered = await filterOutShorts(clean);
 		collected.push(...filtered);
 		currentToken = result.pageInfo.nextPageToken;
-
-		if (collected.length >= TARGET_INITIAL_VIDEOS || !currentToken) break;
+		hasMore = !!currentToken;
 	}
 
 	return {

@@ -7,6 +7,7 @@
 <script lang="ts">
 	import VideoCard from '$lib/components/VideoCard.svelte';
 	import VirtualFeed from '$lib/components/VirtualFeed.svelte';
+	import SlowLoadNotice from '$lib/components/SlowLoadNotice.svelte';
 	import type { VideoItem } from '$lib/types';
 	import type { PageData } from './$types';
 
@@ -99,3 +100,5 @@
 		{/snippet}
 	</VirtualFeed>
 </div>
+
+<SlowLoadNotice visible={loadingMore} />

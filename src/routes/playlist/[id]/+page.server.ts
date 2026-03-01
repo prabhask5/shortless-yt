@@ -13,8 +13,6 @@ import type { VideoItem } from '$lib/types';
 
 /** Minimum filtered videos to collect before displaying. */
 const TARGET_INITIAL_VIDEOS = 12;
-/** Maximum API pages to fetch during initial load. */
-const MAX_INITIAL_PAGES = 6;
 
 export const load: PageServerLoad = async ({ params }) => {
 	const playlistId = params.id;
@@ -45,9 +43,7 @@ export const load: PageServerLoad = async ({ params }) => {
 	collected.push(...filtered);
 	let currentToken: string | undefined = firstPage.pageInfo.nextPageToken;
 
-	for (let page = 1; page < MAX_INITIAL_PAGES; page++) {
-		if (collected.length >= TARGET_INITIAL_VIDEOS || !currentToken) break;
-
+	while (collected.length < TARGET_INITIAL_VIDEOS && currentToken) {
 		let pageResult;
 		try {
 			pageResult = await getPlaylistVideos(playlistId, currentToken);

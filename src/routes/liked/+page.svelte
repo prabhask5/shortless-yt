@@ -8,6 +8,7 @@
 	import VideoCard from '$lib/components/VideoCard.svelte';
 	import VirtualFeed from '$lib/components/VirtualFeed.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
+	import SlowLoadNotice from '$lib/components/SlowLoadNotice.svelte';
 	import { useColumns } from '$lib/stores/columns.svelte';
 	import type { VideoItem } from '$lib/types';
 	import type { PageData } from './$types';
@@ -23,15 +24,18 @@
 	let allVideos = $state<VideoItem[]>([]);
 	let nextPageToken = $state<string | undefined>(undefined);
 	let loadingMore = $state(false);
+	let initialLoading = $state(true);
 
 	let generation = 0;
 
 	$effect(() => {
+		initialLoading = true;
 		const gen = ++generation;
 		data.streamed.likedData.then((likedData) => {
 			if (gen !== generation) return;
 			allVideos = likedData.videos;
 			nextPageToken = likedData.nextPageToken;
+			initialLoading = false;
 		});
 	});
 
@@ -95,3 +99,5 @@
 		<p class="text-yt-text-secondary py-8 text-center">Failed to load liked videos.</p>
 	{/await}
 </div>
+
+<SlowLoadNotice visible={initialLoading || loadingMore} />

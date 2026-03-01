@@ -21,8 +21,6 @@ import { filterOutShorts, filterOutBrokenVideos } from '$lib/server/shorts';
 
 /** Minimum filtered videos to collect before showing the initial page. */
 const TARGET_INITIAL_VIDEOS = 12;
-/** Maximum API pages to fetch during initial load to prevent runaway usage. */
-const MAX_INITIAL_PAGES = 6;
 
 const emptyChannels: PaginatedResult<ChannelItem> = {
 	items: [],
@@ -37,9 +35,10 @@ async function fetchAuthData(accessToken: string) {
 
 	/* Fetch subscription feed pages until we have enough filtered videos. */
 	const collected: VideoItem[] = [];
+	let hasMore = true;
 	let cursor: SubFeedCursor | undefined = undefined;
 
-	for (let page = 0; page < MAX_INITIAL_PAGES; page++) {
+	while (collected.length < TARGET_INITIAL_VIDEOS && hasMore) {
 		let feedResult;
 		try {
 			feedResult = await getSubscriptionFeed(accessToken, cursor);
@@ -52,8 +51,7 @@ async function fetchAuthData(accessToken: string) {
 		const filtered = await filterOutShorts(clean);
 		collected.push(...filtered);
 		cursor = feedResult.cursor;
-
-		if (collected.length >= TARGET_INITIAL_VIDEOS || !cursor) break;
+		hasMore = !!cursor;
 	}
 
 	const subscriptions = await subscriptionsPromise;
@@ -73,9 +71,10 @@ async function fetchAnonData(categoryId?: string) {
 
 	/* Fetch trending pages until we have enough filtered videos. */
 	const collected: VideoItem[] = [];
+	let hasMore = true;
 	let currentToken: string | undefined = undefined;
 
-	for (let page = 0; page < MAX_INITIAL_PAGES; page++) {
+	while (collected.length < TARGET_INITIAL_VIDEOS && hasMore) {
 		let trending;
 		try {
 			trending = await getTrending(categoryId, currentToken);
@@ -88,8 +87,7 @@ async function fetchAnonData(categoryId?: string) {
 		const filtered = await filterOutShorts(clean);
 		collected.push(...filtered);
 		currentToken = trending.pageInfo.nextPageToken;
-
-		if (collected.length >= TARGET_INITIAL_VIDEOS || !currentToken) break;
+		hasMore = !!currentToken;
 	}
 
 	const categories = await categoriesPromise;
