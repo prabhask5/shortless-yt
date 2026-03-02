@@ -14,8 +14,7 @@
 </script>
 
 <svelte:head>
-	<title>{isQuotaError ? 'Daily Limit Reached' : `Error ${$page.status}`} - Shortless YouTube</title
-	>
+	<title>{isQuotaError ? 'Daily Limit Reached' : `Error ${$page.status}`} - Shortless</title>
 </svelte:head>
 
 <div class="flex min-h-[60vh] flex-col items-center justify-center px-4 text-center">
@@ -27,8 +26,8 @@
 		</svg>
 		<h1 class="text-yt-text mb-2 text-2xl font-bold sm:text-3xl">Daily Limit Reached</h1>
 		<p class="text-yt-text-secondary mb-6 max-w-md text-sm sm:text-base">
-			Shortless YouTube has hit its YouTube API daily quota. The quota resets at midnight Pacific
-			Time. Cached pages may still work — try going back or visiting a page you've already loaded.
+			Shortless has hit its YouTube API daily quota. The quota resets at midnight Pacific Time.
+			Cached pages may still work — try going back or visiting a page you've already loaded.
 		</p>
 		<a
 			href="/"

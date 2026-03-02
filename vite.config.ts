@@ -10,9 +10,9 @@ export default defineConfig({
 		SvelteKitPWA({
 			registerType: 'prompt',
 			manifest: {
-				name: 'Shortless YouTube',
-				short_name: 'Shortless YT',
-				description: 'YouTube without Shorts',
+				name: 'Shortless',
+				short_name: 'Shortless',
+				description: 'Watch videos without Shorts',
 				theme_color: '#0f0f0f',
 				background_color: '#0f0f0f',
 				display: 'standalone',

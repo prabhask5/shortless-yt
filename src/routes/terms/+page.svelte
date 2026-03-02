@@ -1,5 +1,5 @@
 <svelte:head>
-	<title>Terms of Service - Shortless YouTube</title>
+	<title>Terms of Service - Shortless</title>
 </svelte:head>
 
 <div class="mx-auto max-w-screen-md px-4 py-8">
@@ -8,9 +8,9 @@
 
 	<h2 class="mt-6 mb-2 text-lg font-medium">Service Description</h2>
 	<p class="text-yt-text-secondary mb-4">
-		Shortless YouTube is a web application that provides an alternative interface for browsing
-		YouTube content with short-form videos filtered out. All content is fetched from YouTube via
-		their official Data API v3.
+		Shortless is a web application that provides an alternative interface for browsing YouTube
+		content with short-form videos filtered out. All content is fetched from YouTube via their
+		official Data API v3.
 	</p>
 
 	<h2 class="mt-6 mb-2 text-lg font-medium">Usage</h2>

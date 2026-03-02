@@ -56,7 +56,7 @@
 </script>
 
 <svelte:head>
-	<title>{data.playlist.title} - Shortless YouTube</title>
+	<title>{data.playlist.title} - Shortless</title>
 </svelte:head>
 
 <div class="mx-auto max-w-screen-xl px-4 py-4">

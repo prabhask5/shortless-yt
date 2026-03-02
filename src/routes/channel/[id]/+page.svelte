@@ -107,7 +107,7 @@
 </script>
 
 <svelte:head>
-	<title>{data.channel.title} - Shortless YouTube</title>
+	<title>{data.channel.title} - Shortless</title>
 </svelte:head>
 
 <div class="mx-auto max-w-screen-2xl">

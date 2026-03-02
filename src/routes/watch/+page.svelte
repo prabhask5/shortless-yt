@@ -105,7 +105,7 @@
 </script>
 
 <svelte:head>
-	<title>{data.video.title} - Shortless YouTube</title>
+	<title>{data.video.title} - Shortless</title>
 	<meta name="description" content={data.video.title} />
 </svelte:head>
 

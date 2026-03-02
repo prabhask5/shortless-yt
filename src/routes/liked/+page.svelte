@@ -66,7 +66,7 @@
 </script>
 
 <svelte:head>
-	<title>Liked Videos - Shortless YouTube</title>
+	<title>Liked Videos - Shortless</title>
 </svelte:head>
 
 <div class="mx-auto max-w-screen-xl px-4 py-4">

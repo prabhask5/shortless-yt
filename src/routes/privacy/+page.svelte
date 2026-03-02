@@ -1,5 +1,5 @@
 <svelte:head>
-	<title>Privacy Policy - Shortless YouTube</title>
+	<title>Privacy Policy - Shortless</title>
 </svelte:head>
 
 <div class="mx-auto max-w-screen-md px-4 py-8">
@@ -7,10 +7,9 @@
 	<p class="text-yt-text-secondary mb-2 text-sm">Last updated: March 2026</p>
 
 	<p class="text-yt-text-secondary mb-4">
-		Shortless YouTube ("we", "our", "the app") is an alternative YouTube frontend. This privacy
-		policy describes how we access, use, store, and protect your data, including data obtained
-		through Google APIs. Our use and transfer of information received from Google APIs adheres to
-		the
+		Shortless ("we", "our", "the app") is an alternative YouTube frontend. This privacy policy
+		describes how we access, use, store, and protect your data, including data obtained through
+		Google APIs. Our use and transfer of information received from Google APIs adheres to the
 		<a
 			href="https://developers.google.com/terms/api-services-user-data-policy"
 			class="text-blue-400 hover:underline"

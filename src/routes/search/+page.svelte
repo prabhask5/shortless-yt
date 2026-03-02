@@ -83,7 +83,7 @@
 </script>
 
 <svelte:head>
-	<title>{data.query ? `${data.query} - Shortless YouTube` : 'Search - Shortless YouTube'}</title>
+	<title>{data.query ? `${data.query} - Shortless` : 'Search - Shortless'}</title>
 </svelte:head>
 
 <div class="mx-auto max-w-screen-xl px-4 py-4">

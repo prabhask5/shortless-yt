@@ -130,8 +130,8 @@
 </script>
 
 <svelte:head>
-	<title>Shortless YouTube</title>
-	<meta name="description" content="YouTube without Shorts" />
+	<title>Shortless</title>
+	<meta name="description" content="Watch videos without Shorts" />
 </svelte:head>
 
 {#snippet videoSkeletons()}

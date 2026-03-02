@@ -1,12 +1,12 @@
 <svelte:head>
-	<title>About - Shortless YouTube</title>
+	<title>About - Shortless</title>
 </svelte:head>
 
 <div class="mx-auto max-w-screen-md px-4 py-8">
-	<h1 class="mb-4 text-2xl font-bold">About Shortless YouTube</h1>
+	<h1 class="mb-4 text-2xl font-bold">About Shortless</h1>
 	<p class="text-yt-text-secondary mb-4">
-		Shortless YouTube is an alternative YouTube frontend that completely removes Shorts from your
-		viewing experience. No shelves, no tabs, no recommendations — just videos.
+		Shortless is an alternative YouTube frontend that completely removes Shorts from your viewing
+		experience. No shelves, no tabs, no recommendations — just videos.
 	</p>
 	<p class="text-yt-text-secondary mb-4">
 		This app uses the YouTube Data API v3 to fetch and display content. All video playback happens
