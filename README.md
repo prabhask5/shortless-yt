@@ -4,6 +4,8 @@
 
 Check it out at: [shortless.prabhas.io](https://shortless.prabhas.io)
 
+> **[Read the Architecture Deep Dive →](ARCHITECTURE.md)** — caching strategy, smart revalidation, shorts detection pipeline, auth flow, quota optimizations, and system design decisions.
+
 ## Projects
 
 ### [PWA App](/) (root)
@@ -44,10 +46,6 @@ A Chrome/Firefox extension that removes all traces of Shorts from youtube.com. C
 - `/shorts/` URLs redirected to normal `/watch?v=` player
 - No data collection, no external requests
 - Works on desktop browsers
-
-## Architecture
-
-See **[ARCHITECTURE.md](ARCHITECTURE.md)** for a detailed system design walkthrough — caching strategy, shorts detection pipeline, auth flow, API quota optimizations, and client-side patterns.
 
 ## Development
 

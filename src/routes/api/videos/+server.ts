@@ -35,7 +35,7 @@ import type { VideoItem } from '$lib/types';
  */
 function isValidSubFeedCursor(value: unknown): value is SubFeedCursor {
 	if (!Array.isArray(value)) return false;
-	if (value.length > 15) return false;
+	if (value.length > 500) return false;
 	for (const item of value) {
 		if (typeof item !== 'object' || item === null) return false;
 		if (typeof (item as Record<string, unknown>).playlistId !== 'string') return false;

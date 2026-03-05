@@ -1,6 +1,6 @@
 # Architecture
 
-A YouTube frontend that filters out Shorts. SvelteKit + Svelte 5, deployed on Vercel serverless, with a two-layer cache (in-memory + Upstash Redis) to stay under the YouTube Data API's 10,000 units/day quota.
+A YouTube frontend that filters out Shorts. SvelteKit + Svelte 5, deployed on Vercel serverless, with a multi-layer caching system (in-memory L1 + Upstash Redis L2 + smart revalidation) designed to stay under the YouTube Data API's 10,000 units/day quota while keeping perceived load times near-instant.
 
 ## Table of Contents
 
@@ -8,6 +8,7 @@ A YouTube frontend that filters out Shorts. SvelteKit + Svelte 5, deployed on Ve
 - [Request Lifecycle](#request-lifecycle)
 - [YouTube API Layer](#youtube-api-layer)
 - [Caching System](#caching-system)
+- [Smart Revalidation](#smart-revalidation)
 - [Shorts Detection](#shorts-detection)
 - [Authentication](#authentication)
 - [Client-Side Architecture](#client-side-architecture)
@@ -30,10 +31,14 @@ A YouTube frontend that filters out Shorts. SvelteKit + Svelte 5, deployed on Ve
 │              │     │        │                                        │
 │              │◀────│        ▼                                        │
 │              │     │  youtube.ts ──▶ cache.ts ──▶ redis.ts           │
-│              │     │      │              │            │               │
-│              │     │      │           L1 Map      L2 Redis           │
-│              │     │      │                                          │
-│              │     │      ▼                                          │
+│              │     │      │           │    │          │               │
+│              │     │      │        L1 Map  │      L2 Redis           │
+│              │     │      │           │    │                          │
+│              │     │      │       isFresh? │                          │
+│              │     │      │         │   └──┘                          │
+│              │     │      │    yes? │ no? → head check → refresh()   │
+│              │     │      │    return│       or full fetch            │
+│              │     │      ▼         │                                │
 │              │     │  YouTube Data API v3                             │
 │              │     │      │                                          │
 │              │     │      ▼                                          │
@@ -86,7 +91,7 @@ return {
 
 ## YouTube API Layer
 
-**`src/lib/server/youtube.ts`** — Single module (~1,700 lines) wrapping all YouTube Data API v3 calls. Every function follows the same pattern: check cache → call API → normalize response → cache result.
+**`src/lib/server/youtube.ts`** — Single module wrapping all YouTube Data API v3 calls. Every function follows a multi-tier pattern: check L1 cache → check L2 Redis → smart revalidation on stale hit → API fetch on true miss → normalize → cache.
 
 ### Core Fetch Wrapper
 
@@ -115,18 +120,20 @@ YouTube has no "list videos by channel" endpoint. `getChannelVideos()` resolves 
 
 This means channel uploads and explicit playlist pages share the same `plvideos:` cache. Visiting a channel page, watching a video from that channel (sidebar "more from channel"), and browsing the same uploads playlist all hit the same cache entries.
 
-### Subscription Feed: K-Way Merge
+### Subscription Feed: K-Way Merge of All Channels
 
 YouTube has no subscription feed API endpoint. We build one manually:
 
-1. Fetch user's subscriptions → up to 15 channel IDs (`SUBFEED_MAX_CHANNELS`)
-2. Fetch each channel's uploads playlist ID in parallel (populates `ch:uploads:{channelId}` cache so subsequent `getChannelVideos()` calls skip the lookup)
-3. Fetch the first 10 videos from each channel's uploads playlist in parallel (small batches keep response payloads light for the merge; the API cost is 1 unit per call regardless of batch size)
-4. **K-way merge:** A min-heap picks the channel whose top buffered video has the most recent `publishedAt`. When a channel's buffer is exhausted, fetch its next page on demand.
-5. After selecting 20 videos, call `getVideoDetails()` on only those 20 IDs — this is quota-efficient because we avoid hydrating videos that were buffered but not selected.
-6. Return a serializable cursor (`SubFeedCursor`: array of `{playlistId, offset}`) for pagination.
+1. **Discover all subscriptions** — paginate through every page of the user's subscriptions (YouTube returns 50 per page). For a user with 200 subscriptions, this is 4 API calls — all cached at 4h (12h effective in L1).
+2. **Resolve uploads playlists** — batch-fetch `contentDetails` for all channel IDs (50 per request). Each channel's uploads playlist ID is cached at `ch:uploads:{channelId}` for 24h. The full list of playlist IDs is cached at `user:subfeed:plids:{tokenHash}` for 4h.
+3. **Fetch initial batches** — fetch the 10 most recent uploads from each channel's playlist in parallel. Each batch is cached at `subfeed:batch:{playlistId}` for 2h with [smart revalidation](#smart-revalidation) — a 1-item head check determines if a channel has new uploads before doing a full re-fetch.
+4. **K-way merge** — a linear scan picks the channel whose top buffered video has the most recent `publishedAt`. When a channel's buffer is exhausted, its next page is fetched on demand.
+5. **Lazy hydration** — after selecting 20 videos, call `getVideoDetails()` on only those 20 IDs. Videos that were buffered but not selected are never hydrated — this is quota-efficient.
+6. **Cursor-based pagination** — return a serializable cursor (`SubFeedCursor`: array of `{playlistId, offset, fetchToken, nextToken}`) that allows the client to resume the merge from where it left off.
 
-**Why not fetch all videos first?** Fetching all recent videos from 15 channels and sorting would waste quota on videos the user never scrolls to. The heap approach is lazy — it only fetches the next page from a channel when that channel's buffer is exhausted AND that channel is competitive in the merge order.
+**Why include all channels?** Earlier versions capped at 15 channels, which caused the subscription feed to miss content from many subscribed channels. The k-way merge is inherently lazy — it only fetches the next page from a channel when that channel's buffer is exhausted AND that channel is competitive in the merge order. Channels that haven't uploaded recently sit idle in the buffer and cost nothing beyond the initial 10-item fetch (which is cached aggressively).
+
+**Why not fetch all videos first?** Fetching all recent videos from all channels and sorting would waste quota on videos the user never scrolls to. The merge approach is lazy — the total API calls scale with how far the user scrolls, not with how many channels they're subscribed to.
 
 ### Request Coalescing (Singleflight)
 
@@ -144,7 +151,7 @@ function singleflight<T>(key: string, fn: () => Promise<T>): Promise<T> {
 }
 ```
 
-Applied to: `searchVideos`, `getTrending`, `getPlaylistVideos`, `getComments`. If two concurrent SSR requests need the same trending page, they share one API call. The entry is cleaned up when the promise settles (success or failure). `getChannelVideos` benefits transitively — it delegates to `getPlaylistVideos` which has singleflight.
+Applied to: `searchVideos`, `getTrending`, `getPlaylistVideos`, `getComments`, `fetchUploadsBatch`. If two concurrent SSR requests need the same trending page, they share one API call. The entry is cleaned up when the promise settles (success or failure). `getChannelVideos` benefits transitively — it delegates to `getPlaylistVideos` which has singleflight.
 
 **Trade-off:** If the first caller's request fails, all concurrent waiters also receive the error. This is acceptable because they would have each received the same error independently.
 
@@ -156,11 +163,11 @@ Applied to: `searchVideos`, `getTrending`, `getPlaylistVideos`, `getComments`. I
 2. **L2 (Redis):** Batch-fetch all L1 misses via `publicCache.getWithRedis()` — promotes hits back to L1
 3. **API:** Batch-fetch remaining IDs in groups of 50 (YouTube's max per request)
 
-This means if 20 videos are requested and 15 are in L1, 3 are in Redis, only 2 hit the YouTube API.
+This means if 20 videos are requested and 15 are in L1, 3 are in Redis, only 2 hit the YouTube API. Per-ID caching is the cornerstone of cross-endpoint data sharing: a video encountered through trending, search, a channel page, or a playlist all maps to the same `video:{id}` cache entry.
 
 ### Autocomplete
 
-`getAutocompleteSuggestions(query)` hits YouTube's undocumented `suggestqueries-clients6.youtube.com` endpoint, which returns JSONP-format text. This does **not** consume API quota. Results are extracted via regex and cached for 30 minutes.
+`getAutocompleteSuggestions(query)` hits YouTube's undocumented `suggestqueries-clients6.youtube.com` endpoint, which returns JSONP-format text. This does **not** consume API quota. Results are extracted via regex and cached for 10 minutes.
 
 ---
 
@@ -170,24 +177,38 @@ This means if 20 videos are requested and 15 are in L1, 3 are in Redis, only 2 h
 
 On Vercel serverless, each function invocation runs in an isolated container. In-memory state only persists while the container is "warm" (typically 5–15 minutes of inactivity). A pure in-memory cache has low hit rates because cold starts are frequent. Redis provides persistence across all invocations but adds ~1–5ms latency per call.
 
-**Solution:** Two-layer cache. L1 (in-memory) handles hot-path reads with zero latency. L2 (Redis) catches cold starts. Both layers are written simultaneously on cache miss.
+**Solution:** Two-layer cache with stale-while-revalidate semantics. L1 (in-memory) handles hot-path reads with zero latency. L2 (Redis) catches cold starts. Smart revalidation avoids redundant full re-fetches when data hasn't changed.
 
 ### `src/lib/server/cache.ts` — TTLCache
 
 ```
-┌─────────────────────────────────────────────────┐
-│  TTLCache                                       │
-│                                                 │
-│  .get(key)          → L1 Map (sync, 0ms)        │
-│  .getWithRedis(key) → L1 Map → L2 Redis (async) │
-│  .set(key, val, ttl)→ L1 Map + L2 Redis (async) │
-│                                                 │
-└─────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│  TTLCache                                                     │
+│                                                               │
+│  .get(key)           → L1 Map (sync, 0ms) — serves stale     │
+│  .getWithRedis(key)  → L1 Map → L2 Redis (async)             │
+│  .set(key, val, ttl) → L1 Map (3x TTL) + L2 Redis (2x TTL)  │
+│  .isFresh(key)       → true if within nominal TTL             │
+│  .refresh(key, ttl)  → bump timestamps + Redis TTL, no fetch  │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
 ```
 
-- **L1:** `Map<string, {data, expiresAt}>`. Lazy eviction on read + background sweep every 5 minutes.
-- **L2:** Upstash Redis via HTTP. Reads are awaited; writes are fire-and-forget (don't block the response).
-- **Promotion:** On L2 hit, the value is written back to L1 so subsequent reads within the same warm instance are instant.
+Each cache entry stores two timestamps:
+
+- **`freshUntil`** — data is "fresh" and returned without any revalidation check. Set to `now + TTL`.
+- **`expiresAt`** — data is "stale but usable" and returned immediately, but callers should revalidate. Set to `now + TTL * 3`.
+
+After `expiresAt`, the entry is evicted and a full fetch is required.
+
+```
+│← fresh (return immediately) →│← stale (return + head check) →│← expired (full fetch) →│
+0                             TTL                              3×TTL                     ∞
+```
+
+- **L1:** `Map<string, {data, freshUntil, expiresAt}>`. Lazy eviction on read + background sweep every 5 minutes. Data lives for **3x nominal TTL** — this is the stale-while-revalidate window.
+- **L2:** Upstash Redis via HTTP. Data lives for **2x nominal TTL** — longer than fresh window so cold starts still hit Redis. Reads are awaited; writes are fire-and-forget (don't block the response).
+- **Promotion:** On L2 hit, the value is written to L1 as fresh (it's within Redis TTL, so it's recent enough).
 - **Two singletons:** `publicCache` (prefix `pub:`) for shared data, `userCache` (prefix `usr:`) for per-session data.
 - **Graceful degradation:** If Redis is not configured (local dev), all Redis operations are no-ops. The system behaves as pure L1.
 
@@ -201,14 +222,24 @@ On Vercel serverless, each function invocation runs in an isolated container. In
 
 ### TTL Values
 
-| Data                           | TTL        | Why                                    |
-| ------------------------------ | ---------- | -------------------------------------- |
-| Video/channel/playlist details | 1 hour     | Metadata changes infrequently          |
-| Trending, search, comments     | 30 minutes | Balance freshness vs quota             |
-| Autocomplete suggestions       | 30 minutes | Low-cost endpoint, no quota            |
-| Channel uploads playlist ID    | 24 hours   | Never changes after creation           |
-| Shorts detection (Redis only)  | 7 days     | A video's Short status is permanent    |
-| Video categories               | 24 hours   | YouTube rarely adds/removes categories |
+| Data                                    | Nominal TTL | L1 Effective (3x) | L2 Effective (2x) | Rationale                                                                                                                     |
+| --------------------------------------- | ----------- | ----------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Video/channel/playlist details (per-ID) | 24 hours    | 72 hours          | 48 hours          | Metadata is essentially immutable (title, duration, description never change; view counts being slightly stale is acceptable) |
+| Trending videos                         | 2 hours     | 6 hours           | 4 hours           | Trending list rotates slowly; smart revalidation catches changes cheaply                                                      |
+| Playlist videos                         | 2 hours     | 6 hours           | 4 hours           | Channels upload at most a few times per day; head check catches new uploads                                                   |
+| Subfeed upload batches                  | 2 hours     | 6 hours           | 4 hours           | Same as playlist videos — shared revalidation logic                                                                           |
+| Search results                          | 1 hour      | 3 hours           | 2 hours           | More volatile than playlists, but results don't change drastically                                                            |
+| Comments                                | 1 hour      | 3 hours           | 2 hours           | New comments appear, but stale comments are acceptable                                                                        |
+| Subscriptions list                      | 4 hours     | 12 hours          | 8 hours           | Users rarely subscribe/unsubscribe; count check catches changes                                                               |
+| Subscription status                     | 4 hours     | 12 hours          | 8 hours           | Binary value, rarely changes                                                                                                  |
+| User profile                            | 4 hours     | 12 hours          | 8 hours           | Avatar and channel name almost never change                                                                                   |
+| Liked videos                            | 1 hour      | 3 hours           | 2 hours           | Users like videos more frequently                                                                                             |
+| User playlists                          | 1 hour      | 3 hours           | 2 hours           | Moderate change frequency                                                                                                     |
+| Autocomplete suggestions                | 10 minutes  | 30 minutes        | 20 minutes        | Low-cost (no API quota), freshness matters for UX                                                                             |
+| Channel uploads playlist ID             | 24 hours    | 72 hours          | 48 hours          | Immutable — a channel's uploads playlist ID never changes                                                                     |
+| Video categories                        | 24 hours    | 72 hours          | 48 hours          | YouTube rarely adds/removes categories                                                                                        |
+| Shorts detection (Redis only)           | 7 days      | —                 | 7 days            | A video's Short status is permanent                                                                                           |
+| Subfeed playlist ID list                | 4 hours     | 12 hours          | 8 hours           | Changes only when user subscribes/unsubscribes                                                                                |
 
 ### Cache Key Design
 
@@ -221,7 +252,9 @@ video:abc123              — individual video detail (shared by all endpoints)
 channel:UC123             — individual channel detail
 ch:uploads:UC123          — uploads playlist ID for a channel
 plvideos:UU...:           — playlist videos (shared by channel page, watch sidebar, playlist page)
+subfeed:batch:UU...:      — subscription feed upload batch for a channel
 user:subs:<sha256-16>:    — subscriptions keyed by token hash prefix
+user:subfeed:plids:<hash> — all uploads playlist IDs for a user's subscriptions
 short2:abc123             — shorts detection result (Redis only)
 ```
 
@@ -229,14 +262,73 @@ short2:abc123             — shorts detection result (Redis only)
 
 Every API call uses `maxResults` at the YouTube API maximum (50 for most endpoints, 100 for comments) to maximize data per quota unit. Overlapping data paths share cache entries:
 
-| Data                | Shared By                                                  | Cache Key Pattern                   |
-| ------------------- | ---------------------------------------------------------- | ----------------------------------- |
-| Playlist videos     | Channel page, watch sidebar, playlist page, API pagination | `plvideos:{playlistId}:{pageToken}` |
-| Uploads playlist ID | `getChannelVideos`, subscription feed init                 | `ch:uploads:{channelId}`            |
-| Video details       | All endpoints (trending, search, playlist, liked, channel) | `video:{videoId}`                   |
-| Channel details     | Watch page, channel page, search results                   | `channel:{channelId}`               |
+| Data                | Shared By                                                           | Cache Key Pattern                        |
+| ------------------- | ------------------------------------------------------------------- | ---------------------------------------- |
+| Playlist videos     | Channel page, watch sidebar, playlist page, API pagination          | `plvideos:{playlistId}:{pageToken}`      |
+| Uploads playlist ID | `getChannelVideos`, subscription feed init, `fetchUploadsBatch`     | `ch:uploads:{channelId}`                 |
+| Video details       | All endpoints (trending, search, playlist, liked, channel, subfeed) | `video:{videoId}`                        |
+| Channel details     | Watch page, channel page, search results                            | `channel:{channelId}`                    |
+| Upload batches      | Subscription feed (initial + resume)                                | `subfeed:batch:{playlistId}:{pageToken}` |
 
 `getTrending()` and `getLikedVideos()` populate the per-ID `video:{id}` cache, so videos encountered through trending or liked pages don't need re-fetching when viewed individually.
+
+---
+
+## Smart Revalidation
+
+### The Problem
+
+When a cache entry expires, the naive approach is to throw away the stale data and re-fetch everything from scratch. For a channel's uploads playlist, this means re-fetching all 50 video IDs and then re-hydrating each one — even though the channel likely uploaded 0 or 1 new videos since the last fetch. This is repeat work that wastes both API quota and user wait time.
+
+### The Solution: Lightweight Head Checks
+
+When a cache entry is **stale** (past `freshUntil` but before `expiresAt`), the system performs a cheap 1-item API call to check if the data has actually changed. If unchanged, it bumps the cache timestamps via `cache.refresh()` — no data re-fetch needed.
+
+```
+Cache hit?
+  ├── Fresh (now < freshUntil) → return immediately, 0 API calls
+  ├── Stale (freshUntil < now < expiresAt) → head check
+  │     ├── Unchanged → cache.refresh(), return stale data, 1 API call
+  │     └── Changed → full re-fetch, N API calls
+  └── Expired (now > expiresAt) → full re-fetch, N API calls
+```
+
+### Head Check Functions
+
+Each data type has a purpose-built head check that costs exactly **1 API unit**:
+
+| Function                                               | What It Checks                                                        | API Call                                                       |
+| ------------------------------------------------------ | --------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `isPlaylistHeadUnchanged(playlistId, expectedFirstId)` | Whether the newest video in a playlist matches the cached first video | `playlistItems.list` with `maxResults=1`                       |
+| `isTrendingHeadUnchanged(categoryId, expectedFirstId)` | Whether the #1 trending video matches the cached first video          | `videos.list` with `part=id, maxResults=1` (minimal bandwidth) |
+| `isSubscriptionCountUnchanged(token, expectedTotal)`   | Whether the user's total subscription count has changed               | `subscriptions.list` with `part=id, maxResults=1`              |
+
+### Where It Applies
+
+Smart revalidation is applied to page 1 of list-based endpoints (where new content appears at the top):
+
+- **`getPlaylistVideos`** — on stale page-1 hit, checks if the channel uploaded a new video
+- **`fetchUploadsBatch`** — same check for subscription feed batches
+- **`getTrending`** — on stale page-1 hit, checks if the #1 trending video changed
+- **`getSubscriptions`** — on stale page-1 hit, checks if subscription count changed
+
+Paginated requests (page 2+) skip the head check and fall through to a full fetch, since new content doesn't appear mid-pagination.
+
+### Quota Impact
+
+In the common case where nothing has changed (which is the vast majority of revalidations):
+
+| Without Smart Revalidation                                         | With Smart Revalidation                                  | Savings                         |
+| ------------------------------------------------------------------ | -------------------------------------------------------- | ------------------------------- |
+| `playlistItems.list` (1 unit) + `videos.list` for details (1 unit) | `playlistItems.list` with maxResults=1 (1 unit)          | 1 unit per revalidation         |
+| `videos.list` trending full page (1 unit)                          | `videos.list` with part=id, maxResults=1 (1 unit)        | 0 units but much less bandwidth |
+| `subscriptions.list` full page (1 unit)                            | `subscriptions.list` with part=id, maxResults=1 (1 unit) | 0 units but much less bandwidth |
+
+The real savings compound with the per-ID video cache: when a playlist hasn't changed, the head check avoids not only the playlist re-fetch but also the `getVideoDetails()` call that would follow it. With 24h per-ID TTLs, the video details are likely still cached — but without the head check, the system would still need to resolve all 50 IDs from the playlist before discovering they're cached.
+
+### Error Handling
+
+All head check functions return `true` (assume unchanged) on error. This is the safe default: if the YouTube API is having issues, it's better to serve slightly stale data than to waste quota on a full re-fetch that might also fail.
 
 ---
 
@@ -290,6 +382,18 @@ Output: VideoItem[] (Shorts removed)
 **Fail-safe:** On probe timeout or network error, the video is **kept** (not removed). It's safer to occasionally show a Short than to hide legitimate content. Failed probes and unexpected status codes (429, 403) are NOT cached, so they retry on the next request. This prevents "cache poisoning" where a rate-limited response permanently marks a Short as non-Short.
 
 **Why batch Redis before probing?** On a cold serverless start, L1 is empty. Without L2, every video in a 50-item page would trigger a HEAD probe (~3s each, even with concurrency). With Redis MGET, most videos resolve in a single ~2ms HTTP call, and only truly unknown videos need probing.
+
+### `filterOutBrokenVideos(videos[])` — Pre-Filter
+
+Runs before shorts filtering to avoid wasting HEAD probes on videos that would break the watch page. Removes:
+
+- **Missing ID or title** — ghost entries from deleted/private videos
+- **No thumbnail** — unavailable videos with no visual representation
+- **Upcoming broadcasts** — `liveBroadcastContent === 'upcoming'`, these have no playable content yet and appear as blank cards
+- **Empty duration, not live** — videos with no duration string (not `P0D`/`PT0S`, but literally empty) that aren't live streams. These are typically unprocessed, broken, or premiere placeholders.
+- **Zero duration AND zero views** — completely empty ghost entries
+
+Additionally, the `getTrending()` function specifically filters out both `upcoming` AND `live` broadcasts from the trending feed, as live streams often appear as blank preview cards in the UI.
 
 ---
 
@@ -464,10 +568,10 @@ src/
 ├── lib/
 │   ├── types.ts                 # Shared TypeScript interfaces
 │   ├── server/
-│   │   ├── youtube.ts           # YouTube API client (all API calls)
-│   │   ├── cache.ts             # Two-layer TTL cache (L1 + L2)
+│   │   ├── youtube.ts           # YouTube API client (all API calls + smart revalidation)
+│   │   ├── cache.ts             # Two-layer TTL cache (L1 + L2 + stale-while-revalidate)
 │   │   ├── redis.ts             # Upstash Redis client
-│   │   ├── shorts.ts            # Shorts detection pipeline
+│   │   ├── shorts.ts            # Shorts detection + broken video filtering pipeline
 │   │   ├── auth.ts              # OAuth2 + AES-256-GCM sessions
 │   │   └── env.ts               # Typed env var accessors
 │   ├── components/

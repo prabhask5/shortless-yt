@@ -298,11 +298,22 @@ export function filterOutBrokenVideos(videos: VideoItem[]): VideoItem[] {
 			reasons.push('no thumbnail');
 		}
 
+		/* Filter upcoming broadcasts — they have no playable content yet */
+		if (video.liveBroadcastContent === 'upcoming') {
+			reasons.push('upcoming broadcast');
+		}
+
 		const hasZeroDuration =
 			!video.duration || video.duration === 'P0D' || video.duration === 'PT0S';
 		const hasZeroViews = !video.viewCount || video.viewCount === '0';
 		if (hasZeroDuration && hasZeroViews) {
 			reasons.push(`zero duration (${video.duration}) + zero views`);
+		}
+
+		/* Videos with completely empty duration that aren't live streams
+		 * are likely unprocessed, broken, or premiere placeholders. */
+		if ((!video.duration || video.duration === '') && video.liveBroadcastContent !== 'live') {
+			reasons.push('empty duration, not live');
 		}
 
 		if (reasons.length === 0) {
