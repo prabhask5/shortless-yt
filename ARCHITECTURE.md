@@ -125,7 +125,7 @@ This means channel uploads and explicit playlist pages share the same `plvideos:
 YouTube has no subscription feed API endpoint. We build one manually:
 
 1. **Discover all subscriptions** — paginate through every page of the user's subscriptions (YouTube returns 50 per page). For a user with 200 subscriptions, this is 4 API calls — all cached at 4h (12h effective in L1).
-2. **Resolve uploads playlists** — batch-fetch `contentDetails` for all channel IDs (50 per request). Each channel's uploads playlist ID is cached at `ch:uploads:{channelId}` for 24h. The full list of playlist IDs is cached at `user:subfeed:plids:{tokenHash}` for 4h.
+2. **Resolve uploads playlists** — batch-fetch `contentDetails` for all channel IDs (50 per request). Each channel's uploads playlist ID is cached at `ch:uploads:{channelId}` for 24h. The full list of playlist IDs is cached at `user:subfeed:plids:{channelId}` for 4h.
 3. **Fetch initial batches** — fetch the 10 most recent uploads from each channel's playlist in parallel. Each batch is cached at `subfeed:batch:{playlistId}` for 2h with [smart revalidation](#smart-revalidation) — a 1-item head check determines if a channel has new uploads before doing a full re-fetch.
 4. **K-way merge** — a linear scan picks the channel whose top buffered video has the most recent `publishedAt`. When a channel's buffer is exhausted, its next page is fetched on demand.
 5. **Lazy hydration** — after selecting 20 videos, call `getVideoDetails()` on only those 20 IDs. Videos that were buffered but not selected are never hydrated — this is quota-efficient.
@@ -253,8 +253,8 @@ channel:UC123             — individual channel detail
 ch:uploads:UC123          — uploads playlist ID for a channel
 plvideos:UU...:           — playlist videos (shared by channel page, watch sidebar, playlist page)
 subfeed:batch:UU...:      — subscription feed upload batch for a channel
-user:subs:<sha256-16>:    — subscriptions keyed by token hash prefix
-user:subfeed:plids:<hash> — all uploads playlist IDs for a user's subscriptions
+user:subs:<channelId>:    — subscriptions keyed by user's YouTube channel ID
+user:subfeed:plids:<channelId> — all uploads playlist IDs for a user's subscriptions
 short2:abc123             — shorts detection result (Redis only)
 ```
 

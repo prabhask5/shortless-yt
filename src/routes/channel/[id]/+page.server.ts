@@ -13,10 +13,11 @@ import { filterOutShorts, filterOutBrokenVideos } from '$lib/server/shorts';
 /** Minimum number of non-short videos to collect before showing the initial page. */
 const TARGET_INITIAL_VIDEOS = 12;
 
-async function fetchChannelVideos(channelId: string, accessToken?: string) {
-	const isSubscribedPromise = accessToken
-		? checkSubscription(accessToken, channelId).catch(() => false)
-		: Promise.resolve(false);
+async function fetchChannelVideos(channelId: string, accessToken?: string, userId?: string) {
+	const isSubscribedPromise =
+		accessToken && userId
+			? checkSubscription(accessToken, userId, channelId).catch(() => false)
+			: Promise.resolve(false);
 
 	const collected: VideoItem[] = [];
 	let hasMore = true;
@@ -69,7 +70,11 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	return {
 		channel,
 		streamed: {
-			channelData: fetchChannelVideos(channelId, locals.session?.accessToken)
+			channelData: fetchChannelVideos(
+				channelId,
+				locals.session?.accessToken,
+				locals.session?.channelId
+			)
 		}
 	};
 };

@@ -27,8 +27,8 @@ const emptyChannels: PaginatedResult<ChannelItem> = {
 	pageInfo: { totalResults: 0 }
 };
 
-async function fetchAuthData(accessToken: string) {
-	const subscriptionsPromise = getSubscriptions(accessToken).catch((err) => {
+async function fetchAuthData(accessToken: string, userId: string) {
+	const subscriptionsPromise = getSubscriptions(accessToken, userId).catch((err) => {
 		console.error('[HOME PAGE] getSubscriptions FAILED:', err);
 		return emptyChannels;
 	});
@@ -41,7 +41,7 @@ async function fetchAuthData(accessToken: string) {
 	while (collected.length < TARGET_INITIAL_VIDEOS && hasMore) {
 		let feedResult;
 		try {
-			feedResult = await getSubscriptionFeed(accessToken, cursor);
+			feedResult = await getSubscriptionFeed(accessToken, userId, cursor);
 		} catch (err) {
 			console.error('[HOME PAGE] getSubscriptionFeed FAILED:', err);
 			break;
@@ -106,7 +106,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		return {
 			authenticated: true as const,
 			streamed: {
-				authData: fetchAuthData(locals.session.accessToken)
+				authData: fetchAuthData(locals.session.accessToken, locals.session.channelId)
 			}
 		};
 	}

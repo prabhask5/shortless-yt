@@ -7,6 +7,7 @@ declare global {
 				accessToken: string;
 				refreshToken: string;
 				expiresAt: number;
+				channelId: string;
 			} | null;
 		}
 	}

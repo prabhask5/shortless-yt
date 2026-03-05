@@ -16,7 +16,10 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 	const quotaExhausted = isQuotaExhausted();
 
 	if (locals.session) {
-		const profile = await getUserProfile(locals.session.accessToken).catch(() => null);
+		const profile = await getUserProfile(
+			locals.session.accessToken,
+			locals.session.channelId
+		).catch(() => null);
 		return {
 			user: profile ?? null,
 			quotaExhausted

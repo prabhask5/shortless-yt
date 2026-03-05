@@ -26,8 +26,8 @@
  *   duration, default order.
  * - `video:abc123` — individual video detail fetch (per-ID caching, 24h TTL).
  * - `channel:UC123` — individual channel detail fetch (per-ID caching, 24h TTL).
- * - `user:subs:<hash>:` — subscriptions for a user identified by a SHA-256
- *   hash prefix of their access token (avoids storing the token in keys).
+ * - `user:subs:<channelId>:` — subscriptions for a user identified by their
+ *   YouTube channel ID (stable across access-token refreshes).
  *
  * **Why detail fetches follow search:**
  * The YouTube `search` endpoint only returns `snippet` data (title, thumbnail,
@@ -36,7 +36,6 @@
  * `channels` endpoint is required with the IDs from the search results.
  */
 
-import { createHash } from 'node:crypto';
 import { YOUTUBE_API_KEY } from './env.js';
 import { publicCache, userCache } from './cache.js';
 import type {
@@ -173,11 +172,30 @@ async function isSubscriptionCountUnchanged(
 // ===================================================================
 
 /**
- * Produce a short, collision-resistant hash of an access token for use in cache keys.
- * Avoids storing raw token suffixes which could leak via debug/logging.
+ * Fetch the authenticated user's YouTube channel ID.
+ *
+ * Used once during OAuth callback to persist the channel ID in the session,
+ * and as a backfill in the server hook for sessions created before this was added.
+ * Costs 1 API unit (channels.list with part=id, mine=true).
+ *
+ * @param accessToken - The user's OAuth2 access token.
+ * @returns The user's channel ID, or null if not found.
  */
-function tokenHash(accessToken: string): string {
-	return createHash('sha256').update(accessToken).digest('hex').slice(0, 16);
+export async function fetchMyChannelId(accessToken: string): Promise<string | null> {
+	try {
+		const data = (await youtubeApiFetch(
+			'channels',
+			{ part: 'id', mine: 'true' },
+			accessToken
+		)) as Record<string, unknown>;
+
+		const items = (data.items as Record<string, unknown>[]) ?? [];
+		if (items.length === 0) return null;
+		return (items[0].id as string) ?? null;
+	} catch (err) {
+		console.error('[YOUTUBE] fetchMyChannelId FAILED:', err);
+		return null;
+	}
 }
 
 /**
@@ -1315,9 +1333,10 @@ export async function getPlaylistVideos(
  */
 export async function getSubscriptions(
 	accessToken: string,
+	userId: string,
 	pageToken?: string
 ): Promise<PaginatedResult<ChannelItem>> {
-	const cacheKey = `user:subs:${tokenHash(accessToken)}:${pageToken ?? ''}`;
+	const cacheKey = `user:subs:${userId}:${pageToken ?? ''}`;
 	const cached = await userCache.getWithRedis<PaginatedResult<ChannelItem>>(cacheKey, FOUR_HOURS);
 	if (cached) {
 		if (userCache.isFresh(cacheKey)) return cached;
@@ -1388,8 +1407,12 @@ export async function getSubscriptions(
  * @param channelId   - The channel ID to check subscription status for.
  * @returns Whether the user is subscribed to the channel.
  */
-export async function checkSubscription(accessToken: string, channelId: string): Promise<boolean> {
-	const cacheKey = `user:sub:${tokenHash(accessToken)}:${channelId}`;
+export async function checkSubscription(
+	accessToken: string,
+	userId: string,
+	channelId: string
+): Promise<boolean> {
+	const cacheKey = `user:sub:${userId}:${channelId}`;
 	const cached = await userCache.getWithRedis<boolean>(cacheKey, FOUR_HOURS);
 	if (cached !== undefined) return cached;
 
@@ -1423,9 +1446,10 @@ export async function checkSubscription(accessToken: string, channelId: string):
  */
 export async function getLikedVideos(
 	accessToken: string,
+	userId: string,
 	pageToken?: string
 ): Promise<PaginatedResult<VideoItem>> {
-	const cacheKey = `user:liked:${tokenHash(accessToken)}:${pageToken ?? ''}`;
+	const cacheKey = `user:liked:${userId}:${pageToken ?? ''}`;
 	const cached = await userCache.getWithRedis<PaginatedResult<VideoItem>>(cacheKey, ONE_HOUR);
 	if (cached) return cached;
 
@@ -1467,9 +1491,10 @@ export async function getLikedVideos(
  */
 export async function getUserPlaylists(
 	accessToken: string,
+	userId: string,
 	pageToken?: string
 ): Promise<PaginatedResult<PlaylistItem>> {
-	const cacheKey = `user:playlists:${tokenHash(accessToken)}:${pageToken ?? ''}`;
+	const cacheKey = `user:playlists:${userId}:${pageToken ?? ''}`;
 	const cached = await userCache.getWithRedis<PaginatedResult<PlaylistItem>>(cacheKey, ONE_HOUR);
 	if (cached) return cached;
 
@@ -1650,13 +1675,14 @@ function peekBuffer(buf: ChannelBuffer): PlaylistVideoRef | undefined {
  */
 export async function getSubscriptionFeed(
 	accessToken: string,
+	userId: string,
 	cursor?: SubFeedCursor
 ): Promise<SubFeedResult> {
 	let buffers: ChannelBuffer[];
 
 	if (!cursor) {
 		// First page: discover ALL subscriptions → uploads playlists → initial batches
-		const cacheKey = `user:subfeed:plids:${tokenHash(accessToken)}`;
+		const cacheKey = `user:subfeed:plids:${userId}`;
 		let playlistIds = await userCache.getWithRedis<string[]>(cacheKey, FOUR_HOURS);
 
 		if (!playlistIds) {
@@ -1664,7 +1690,7 @@ export async function getSubscriptionFeed(
 			const allChannelIds: string[] = [];
 			let subPageToken: string | undefined = undefined;
 			do {
-				const subsPage = await getSubscriptions(accessToken, subPageToken);
+				const subsPage = await getSubscriptions(accessToken, userId, subPageToken);
 				for (const ch of subsPage.items) {
 					if (ch.id) allChannelIds.push(ch.id);
 				}
@@ -1808,9 +1834,10 @@ export async function getSubscriptionFeed(
  * @returns Object with `avatarUrl` and `channelTitle`, or null if not found.
  */
 export async function getUserProfile(
-	accessToken: string
+	accessToken: string,
+	userId: string
 ): Promise<{ avatarUrl: string; channelTitle: string } | null> {
-	const cacheKey = `user:profile:${tokenHash(accessToken)}`;
+	const cacheKey = `user:profile:${userId}`;
 	const cached = await userCache.getWithRedis<{ avatarUrl: string; channelTitle: string }>(
 		cacheKey,
 		FOUR_HOURS

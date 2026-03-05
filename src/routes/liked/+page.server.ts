@@ -13,7 +13,7 @@ import { filterOutShorts, filterOutBrokenVideos } from '$lib/server/shorts';
 /** Minimum filtered videos to collect before showing the initial page. */
 const TARGET_INITIAL_VIDEOS = 12;
 
-async function fetchLikedVideos(accessToken: string) {
+async function fetchLikedVideos(accessToken: string, userId: string) {
 	const collected: VideoItem[] = [];
 	let hasMore = true;
 	let currentToken: string | undefined = undefined;
@@ -21,7 +21,7 @@ async function fetchLikedVideos(accessToken: string) {
 	while (collected.length < TARGET_INITIAL_VIDEOS && hasMore) {
 		let result;
 		try {
-			result = await getLikedVideos(accessToken, currentToken);
+			result = await getLikedVideos(accessToken, userId, currentToken);
 		} catch (err) {
 			console.error('[LIKED PAGE] getLikedVideos FAILED:', err);
 			break;
@@ -47,10 +47,12 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 	return {
 		streamed: {
-			likedData: fetchLikedVideos(locals.session.accessToken).catch((err) => {
-				console.error('[LIKED PAGE] getLikedVideos FAILED:', err);
-				return { videos: [], nextPageToken: undefined };
-			})
+			likedData: fetchLikedVideos(locals.session.accessToken, locals.session.channelId).catch(
+				(err) => {
+					console.error('[LIKED PAGE] getLikedVideos FAILED:', err);
+					return { videos: [], nextPageToken: undefined };
+				}
+			)
 		}
 	};
 };

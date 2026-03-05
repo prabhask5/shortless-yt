@@ -21,19 +21,23 @@ function getRedis(): Redis | null {
 	if (redis) return redis;
 
 	const url =
+		process.env.SHORTLESS_YT_CACHE_KV_REST_API_URL ??
 		process.env.SHORTLESS_YT_CACHE_KV_URL ??
 		process.env.UPSTASH_REDIS_REST_URL ??
 		process.env.KV_REST_API_URL;
 	const token =
+		process.env.SHORTLESS_YT_CACHE_KV_REST_API_TOKEN ??
 		process.env.SHORTLESS_YT_CACHE_KV_TOKEN ??
 		process.env.UPSTASH_REDIS_REST_TOKEN ??
 		process.env.KV_REST_API_TOKEN;
 
 	if (!url || !token) {
+		console.warn('[CACHE] Redis L2 not configured — missing URL or token env var');
 		return null;
 	}
 
 	redis = new Redis({ url, token });
+	console.log('[CACHE] Redis L2 connected');
 	return redis;
 }
 

@@ -25,6 +25,7 @@ import {
 	STATE_COOKIE_NAME
 } from '$lib/server/auth';
 import { PUBLIC_APP_URL } from '$lib/server/env';
+import { fetchMyChannelId } from '$lib/server/youtube';
 import { timingSafeEqual } from 'node:crypto';
 
 export const GET: RequestHandler = async ({ url, cookies }) => {
@@ -78,10 +79,17 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
 		throw error(500, 'Authentication incomplete — please try signing in again.');
 	}
 
+	const channelId = await fetchMyChannelId(tokens.access_token);
+	if (!channelId) {
+		console.error('[AUTH CALLBACK] Could not fetch channel ID for authenticated user');
+		throw error(500, 'Could not determine your YouTube channel. Please try again.');
+	}
+
 	const session = {
 		accessToken: tokens.access_token,
 		refreshToken: tokens.refresh_token,
-		expiresAt: Date.now() + tokens.expires_in * 1000
+		expiresAt: Date.now() + tokens.expires_in * 1000,
+		channelId
 	};
 
 	const encrypted = encryptSession(session);

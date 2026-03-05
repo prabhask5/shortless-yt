@@ -30,6 +30,7 @@ import {
 	SESSION_COOKIE_NAME
 } from '$lib/server/auth';
 import { PUBLIC_APP_URL } from '$lib/server/env';
+import { fetchMyChannelId } from '$lib/server/youtube';
 
 // ===================================================================
 // Rate limiting
@@ -173,11 +174,33 @@ export const handle: Handle = async ({ event, resolve }) => {
 			}
 
 			if (session) {
-				event.locals.session = {
-					accessToken: session.accessToken,
-					refreshToken: session.refreshToken,
-					expiresAt: session.expiresAt
-				};
+				/* Backfill channelId for sessions created before it was stored */
+				if (!session.channelId) {
+					const channelId = await fetchMyChannelId(session.accessToken);
+					if (channelId) {
+						session = { ...session, channelId };
+						const isSecure = PUBLIC_APP_URL().startsWith('https://');
+						event.cookies.set(SESSION_COOKIE_NAME, encryptSession(session), {
+							path: '/',
+							httpOnly: true,
+							secure: isSecure,
+							sameSite: 'lax',
+							maxAge: 60 * 60 * 24 * 30
+						});
+					}
+				}
+
+				if (session.channelId) {
+					event.locals.session = {
+						accessToken: session.accessToken,
+						refreshToken: session.refreshToken,
+						expiresAt: session.expiresAt,
+						channelId: session.channelId
+					};
+				} else {
+					/* Cannot identify user — treat as unauthenticated */
+					event.locals.session = null;
+				}
 			}
 		} else {
 			event.locals.session = null;

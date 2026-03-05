@@ -89,7 +89,11 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			if (!locals.session) {
 				throw error(401, 'Authentication required');
 			}
-			const result = await getLikedVideos(locals.session.accessToken, pageToken);
+			const result = await getLikedVideos(
+				locals.session.accessToken,
+				locals.session.channelId,
+				pageToken
+			);
 			const clean = filterOutBrokenVideos(result.items);
 			const filtered = await filterOutShorts(clean);
 			return json(
@@ -165,7 +169,11 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 				throw error(400, 'Invalid cursor JSON');
 			}
 
-			const result = await getSubscriptionFeed(locals.session.accessToken, feedCursor);
+			const result = await getSubscriptionFeed(
+				locals.session.accessToken,
+				locals.session.channelId,
+				feedCursor
+			);
 			const clean = filterOutBrokenVideos(result.items);
 			const filtered = await filterOutShorts(clean);
 			return json(
