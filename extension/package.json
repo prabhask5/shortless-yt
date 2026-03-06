@@ -1,6 +1,6 @@
 {
 	"name": "shortless-youtube",
-	"version": "1.0.0",
+	"version": "1.0.3",
 	"description": "Remove all traces of YouTube Shorts from the YouTube website",
 	"type": "module",
 	"scripts": {
