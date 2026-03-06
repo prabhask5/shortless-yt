@@ -4,6 +4,13 @@
 
 Check it out at: [shortless.prabhas.io](https://shortless.prabhas.io)
 
+Install the browser extension through the links below (more information about this extension later in the doc):
+
+| Browser | Link                                                                                                            |
+| ------- | --------------------------------------------------------------------------------------------------------------- |
+| Chrome  | [Chrome Web Store](https://chromewebstore.google.com/detail/shortless-youtube/gbhekjekjjjepnnbbfipfbiobndblpaa) |
+| Firefox | [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/shortless-youtube/)                            |
+
 > **[Read the Architecture Deep Dive →](ARCHITECTURE.md)** — caching strategy, smart revalidation, shorts detection pipeline, auth flow, quota optimizations, and system design decisions.
 
 ## Projects

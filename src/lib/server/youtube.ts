@@ -462,7 +462,7 @@ export async function searchVideos(
 	options?: { pageToken?: string; videoDuration?: string; order?: string; channelId?: string }
 ): Promise<PaginatedResult<VideoItem>> {
 	const cacheKey = `search:v:${encodeURIComponent(query)}:${options?.pageToken ?? ''}:${options?.videoDuration ?? ''}:${options?.order ?? ''}:${options?.channelId ?? ''}`;
-	const cached = await publicCache.getWithRedis<PaginatedResult<VideoItem>>(cacheKey, ONE_HOUR);
+	const cached = await publicCache.getWithRedis<PaginatedResult<VideoItem>>(cacheKey, TWO_HOURS);
 	if (cached) return cached;
 
 	return singleflight(cacheKey, async () => {
@@ -494,7 +494,7 @@ export async function searchVideos(
 			}
 		};
 
-		publicCache.set(cacheKey, result, ONE_HOUR);
+		publicCache.set(cacheKey, result, TWO_HOURS);
 		return result;
 	});
 }
@@ -514,7 +514,7 @@ export async function searchChannels(
 	pageToken?: string
 ): Promise<PaginatedResult<ChannelItem>> {
 	const cacheKey = `search:c:${encodeURIComponent(query)}:${pageToken ?? ''}`;
-	const cached = await publicCache.getWithRedis<PaginatedResult<ChannelItem>>(cacheKey, ONE_HOUR);
+	const cached = await publicCache.getWithRedis<PaginatedResult<ChannelItem>>(cacheKey, TWO_HOURS);
 	if (cached) return cached;
 
 	const params: Record<string, string> = {
@@ -542,7 +542,7 @@ export async function searchChannels(
 		}
 	};
 
-	publicCache.set(cacheKey, result, ONE_HOUR);
+	publicCache.set(cacheKey, result, TWO_HOURS);
 	return result;
 }
 
@@ -561,7 +561,7 @@ export async function searchPlaylists(
 	pageToken?: string
 ): Promise<PaginatedResult<PlaylistItem>> {
 	const cacheKey = `search:p:${encodeURIComponent(query)}:${pageToken ?? ''}`;
-	const cached = await publicCache.getWithRedis<PaginatedResult<PlaylistItem>>(cacheKey, ONE_HOUR);
+	const cached = await publicCache.getWithRedis<PaginatedResult<PlaylistItem>>(cacheKey, TWO_HOURS);
 	if (cached) return cached;
 
 	const params: Record<string, string> = {
@@ -602,7 +602,7 @@ export async function searchPlaylists(
 		}
 	};
 
-	publicCache.set(cacheKey, result, ONE_HOUR);
+	publicCache.set(cacheKey, result, TWO_HOURS);
 	return result;
 }
 
@@ -644,7 +644,7 @@ export async function searchMixed(
 		>;
 		nextPageToken?: string;
 	};
-	const cached = await publicCache.getWithRedis<MixedResult>(cacheKey, ONE_HOUR);
+	const cached = await publicCache.getWithRedis<MixedResult>(cacheKey, TWO_HOURS);
 	if (cached) return cached;
 
 	const params: Record<string, string> = {
@@ -717,7 +717,7 @@ export async function searchMixed(
 	}
 
 	const result = { results, nextPageToken: nextToken };
-	publicCache.set(cacheKey, result, ONE_HOUR);
+	publicCache.set(cacheKey, result, TWO_HOURS);
 	return result;
 }
 
@@ -1254,8 +1254,9 @@ export async function getPlaylist(playlistId: string): Promise<PlaylistItem | nu
 /**
  * Fetch videos contained in a playlist.
  *
- * Retrieves playlist item IDs first, then fetches full video details via
- * {@link getVideoDetails}.
+ * Retrieves playlist item IDs first, then hydrates via {@link getVideoDetails}.
+ * On stale cache hits where the head video changed, uses **incremental diff**:
+ * only hydrates new video IDs and reuses cached VideoItems for known ones.
  *
  * @param playlistId - The YouTube playlist ID.
  * @param pageToken  - Optional pagination token for the next page.
@@ -1270,14 +1271,56 @@ export async function getPlaylistVideos(
 	if (cached) {
 		if (publicCache.isFresh(cacheKey)) return cached;
 
-		/* Stale hit on page 1 — check if the newest upload changed.
-		 * Costs 1 API unit instead of 2+ for a full re-fetch. */
+		/* Stale page 1 — head check (1 unit). Page 2+ skips this since
+		 * new uploads only appear at position 0. */
 		if (!pageToken && cached.items.length > 0) {
 			const unchanged = await isPlaylistHeadUnchanged(playlistId, cached.items[0].id);
 			if (unchanged) {
 				publicCache.refresh(cacheKey, TWO_HOURS);
 				return cached;
 			}
+
+			/* Head changed — incremental diff: re-fetch the playlist item
+			 * IDs (unavoidable, need new ordering) but only hydrate IDs not
+			 * in cached.items. Avoids re-hydrating 49 unchanged videos. */
+			return singleflight(cacheKey, async () => {
+				const data = (await youtubeApiFetch('playlistItems', {
+					part: 'snippet',
+					playlistId,
+					maxResults: '50'
+				})) as Record<string, unknown>;
+				const items = (data.items as Record<string, unknown>[]) ?? [];
+
+				const videoIds = items
+					.map((i) => {
+						const snippet = i.snippet as Record<string, unknown> | undefined;
+						const resourceId = snippet?.resourceId as Record<string, string> | undefined;
+						return resourceId?.videoId ?? '';
+					})
+					.filter(Boolean);
+
+				const cachedMap = new Map(cached.items.map((v) => [v.id, v]));
+				const newIds = videoIds.filter((id) => !cachedMap.has(id));
+				const newVideos = newIds.length > 0 ? await getVideoDetails(newIds) : [];
+				const newMap = new Map(newVideos.map((v) => [v.id, v]));
+
+				/* Reconstruct in API order: reuse cached items, fill new from hydration. */
+				const videos = videoIds
+					.map((id) => cachedMap.get(id) ?? newMap.get(id))
+					.filter((v): v is VideoItem => v !== undefined);
+
+				const pageInfoRaw = data.pageInfo as Record<string, unknown> | undefined;
+				const result: PaginatedResult<VideoItem> = {
+					items: videos,
+					pageInfo: {
+						nextPageToken: data.nextPageToken as string | undefined,
+						totalResults: (pageInfoRaw?.totalResults as number) ?? 0
+					}
+				};
+
+				publicCache.set(cacheKey, result, TWO_HOURS);
+				return result;
+			});
 		}
 	}
 
@@ -1440,7 +1483,13 @@ export async function checkSubscription(
 /**
  * Fetch videos the authenticated user has liked.
  *
+ * On stale page-1 hits, fetches just IDs (part=id, 1 unit) to diff
+ * against cached items. If unchanged, refreshes cache. If changed,
+ * only hydrates new IDs via getVideoDetails — avoids re-fetching
+ * full details for all 50 videos when the user liked 1 new one.
+ *
  * @param accessToken - The user's OAuth2 access token.
+ * @param userId      - The user's YouTube channel ID (for cache key scoping).
  * @param pageToken   - Optional pagination token for the next page.
  * @returns Paginated list of liked video items.
  */
@@ -1451,7 +1500,61 @@ export async function getLikedVideos(
 ): Promise<PaginatedResult<VideoItem>> {
 	const cacheKey = `user:liked:${userId}:${pageToken ?? ''}`;
 	const cached = await userCache.getWithRedis<PaginatedResult<VideoItem>>(cacheKey, ONE_HOUR);
-	if (cached) return cached;
+	if (cached) {
+		if (userCache.isFresh(cacheKey)) return cached;
+
+		/* Stale page 1 — fetch IDs only (1 unit, minimal bandwidth)
+		 * to determine what changed without pulling full details. */
+		if (!pageToken) {
+			try {
+				const idData = (await youtubeApiFetch(
+					'videos',
+					{ part: 'id', myRating: 'like', maxResults: '50' },
+					accessToken
+				)) as Record<string, unknown>;
+
+				const idItems = (idData.items as Record<string, unknown>[]) ?? [];
+				const freshIds = idItems.map((i) => i.id as string).filter(Boolean);
+				const idPageInfo = idData.pageInfo as Record<string, unknown> | undefined;
+
+				const cachedIds = cached.items.map((v) => v.id);
+				const unchanged =
+					freshIds.length === cachedIds.length && freshIds.every((id, i) => id === cachedIds[i]);
+
+				if (unchanged) {
+					userCache.refresh(cacheKey, ONE_HOUR);
+					return cached;
+				}
+
+				/* IDs differ — only hydrate new ones, reuse cached for the rest. */
+				const cachedMap = new Map(cached.items.map((v) => [v.id, v]));
+				const newIds = freshIds.filter((id) => !cachedMap.has(id));
+				const newVideos = newIds.length > 0 ? await getVideoDetails(newIds) : [];
+				const newMap = new Map(newVideos.map((v) => [v.id, v]));
+
+				const mergedVideos = freshIds
+					.map((id) => cachedMap.get(id) ?? newMap.get(id))
+					.filter((v): v is VideoItem => v !== undefined);
+
+				for (const video of newVideos) {
+					publicCache.set(`video:${video.id}`, video, ONE_DAY);
+				}
+
+				const result: PaginatedResult<VideoItem> = {
+					items: mergedVideos,
+					pageInfo: {
+						nextPageToken: idData.nextPageToken as string | undefined,
+						totalResults: (idPageInfo?.totalResults as number) ?? 0
+					}
+				};
+
+				userCache.set(cacheKey, result, ONE_HOUR);
+				return result;
+			} catch {
+				/* ID fetch failed — fall through to full fetch. */
+			}
+		}
+	}
 
 	const params: Record<string, string> = {
 		part: 'snippet,contentDetails,statistics',
@@ -1464,7 +1567,6 @@ export async function getLikedVideos(
 	const items = (data.items as Record<string, unknown>[]) ?? [];
 	const videos = items.map(parseVideoItem);
 
-	// Populate per-ID video cache so getVideoDetails() can skip re-fetching these
 	for (const video of videos) {
 		publicCache.set(`video:${video.id}`, video, ONE_DAY);
 	}

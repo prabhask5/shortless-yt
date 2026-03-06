@@ -303,17 +303,21 @@ export function filterOutBrokenVideos(videos: VideoItem[]): VideoItem[] {
 			reasons.push('upcoming broadcast');
 		}
 
+		/* Videos with zero views are almost always unprocessed live stream
+		 * replays, ghost entries, or just-created placeholders. No video that
+		 * appears in trending or subscription feeds should have 0 views. */
+		const hasZeroViews = !video.viewCount || video.viewCount === '0';
+		if (hasZeroViews) {
+			reasons.push(`zero views (${video.viewCount})`);
+		}
+
 		const hasZeroDuration =
 			!video.duration || video.duration === 'P0D' || video.duration === 'PT0S';
-		const hasZeroViews = !video.viewCount || video.viewCount === '0';
-		if (hasZeroDuration && hasZeroViews) {
-			reasons.push(`zero duration (${video.duration}) + zero views`);
-		}
 
 		/* Videos with completely empty duration that aren't live streams
 		 * are likely unprocessed, broken, or premiere placeholders. */
-		if ((!video.duration || video.duration === '') && video.liveBroadcastContent !== 'live') {
-			reasons.push('empty duration, not live');
+		if (hasZeroDuration && video.liveBroadcastContent !== 'live') {
+			reasons.push('zero/empty duration, not live');
 		}
 
 		if (reasons.length === 0) {

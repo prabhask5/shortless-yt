@@ -228,12 +228,12 @@ After `expiresAt`, the entry is evicted and a full fetch is required.
 | Trending videos                         | 2 hours     | 6 hours           | 4 hours           | Trending list rotates slowly; smart revalidation catches changes cheaply                                                      |
 | Playlist videos                         | 2 hours     | 6 hours           | 4 hours           | Channels upload at most a few times per day; head check catches new uploads                                                   |
 | Subfeed upload batches                  | 2 hours     | 6 hours           | 4 hours           | Same as playlist videos — shared revalidation logic                                                                           |
-| Search results                          | 1 hour      | 3 hours           | 2 hours           | More volatile than playlists, but results don't change drastically                                                            |
+| Search results                          | 2 hours     | 6 hours           | 4 hours           | Search costs 100 units per call — longer TTL conserves quota; smart revalidation is impossible (search is always 100 units)   |
 | Comments                                | 1 hour      | 3 hours           | 2 hours           | New comments appear, but stale comments are acceptable                                                                        |
 | Subscriptions list                      | 4 hours     | 12 hours          | 8 hours           | Users rarely subscribe/unsubscribe; count check catches changes                                                               |
 | Subscription status                     | 4 hours     | 12 hours          | 8 hours           | Binary value, rarely changes                                                                                                  |
 | User profile                            | 4 hours     | 12 hours          | 8 hours           | Avatar and channel name almost never change                                                                                   |
-| Liked videos                            | 1 hour      | 3 hours           | 2 hours           | Users like videos more frequently                                                                                             |
+| Liked videos                            | 1 hour      | 3 hours           | 2 hours           | Users like videos more frequently; smart revalidation catches changes cheaply                                                 |
 | User playlists                          | 1 hour      | 3 hours           | 2 hours           | Moderate change frequency                                                                                                     |
 | Autocomplete suggestions                | 10 minutes  | 30 minutes        | 20 minutes        | Low-cost (no API quota), freshness matters for UX                                                                             |
 | Channel uploads playlist ID             | 24 hours    | 72 hours          | 48 hours          | Immutable — a channel's uploads playlist ID never changes                                                                     |
@@ -289,7 +289,7 @@ Cache hit?
   ├── Fresh (now < freshUntil) → return immediately, 0 API calls
   ├── Stale (freshUntil < now < expiresAt) → head check
   │     ├── Unchanged → cache.refresh(), return stale data, 1 API call
-  │     └── Changed → full re-fetch, N API calls
+  │     └── Changed → incremental diff (playlist) or full re-fetch, 2 API calls
   └── Expired (now > expiresAt) → full re-fetch, N API calls
 ```
 
@@ -302,27 +302,72 @@ Each data type has a purpose-built head check that costs exactly **1 API unit**:
 | `isPlaylistHeadUnchanged(playlistId, expectedFirstId)` | Whether the newest video in a playlist matches the cached first video | `playlistItems.list` with `maxResults=1`                       |
 | `isTrendingHeadUnchanged(categoryId, expectedFirstId)` | Whether the #1 trending video matches the cached first video          | `videos.list` with `part=id, maxResults=1` (minimal bandwidth) |
 | `isSubscriptionCountUnchanged(token, expectedTotal)`   | Whether the user's total subscription count has changed               | `subscriptions.list` with `part=id, maxResults=1`              |
+| (liked ID-list diff — see below)                       | Whether the user's liked videos changed at all                        | `videos.list` with `part=id, myRating=like, maxResults=50`     |
 
 ### Where It Applies
 
 Smart revalidation is applied to page 1 of list-based endpoints (where new content appears at the top):
 
-- **`getPlaylistVideos`** — on stale page-1 hit, checks if the channel uploaded a new video
-- **`fetchUploadsBatch`** — same check for subscription feed batches
+- **`getPlaylistVideos`** — on stale page-1 hit, checks if the channel uploaded a new video. If changed, uses **incremental diff** (see below).
+- **`fetchUploadsBatch`** — same head check for subscription feed batches
 - **`getTrending`** — on stale page-1 hit, checks if the #1 trending video changed
 - **`getSubscriptions`** — on stale page-1 hit, checks if subscription count changed
+- **`getLikedVideos`** — on stale page-1 hit, fetches all 50 liked IDs (part=id only, 1 unit) and compares against cached. If identical, refreshes cache. If changed, uses **incremental diff** to only hydrate new IDs.
 
 Paginated requests (page 2+) skip the head check and fall through to a full fetch, since new content doesn't appear mid-pagination.
+
+### Incremental Diff (Playlist Videos)
+
+When a head check detects that a playlist has changed, `getPlaylistVideos` avoids a full re-hydration of all 50 videos. Instead:
+
+1. **Re-fetch playlist item IDs** — `playlistItems.list` with `maxResults=50` (1 API unit). This is unavoidable since we need the new ordering.
+2. **Identify new videos** — compare the fresh video IDs against the cached result. Videos that already exist in the cache are reused directly.
+3. **Hydrate only new videos** — call `getVideoDetails()` on only the truly new IDs (typically 1-5).
+4. **Merge** — reconstruct the full result in the new API order, pulling cached `VideoItem` objects for known IDs and freshly hydrated objects for new ones.
+
+```
+Stale cache: [v1, v2, v3, ..., v50]  (all hydrated)
+API re-fetch: [NEW, v1, v2, ..., v49] (just IDs)
+
+Without incremental:  hydrate all 50 IDs → getVideoDetails(50 IDs)
+With incremental:     hydrate 1 new ID  → getVideoDetails([NEW])
+                      reuse v1-v49 from cache
+```
+
+**Why this matters:** `getVideoDetails()` batches IDs into groups of 50 and performs three-layer lookups (L1 → Redis → API). Even when all 49 old videos are L1 hits, the function still iterates through all IDs and builds filtered arrays. More importantly, if per-ID caches have expired (past the 72h hard expiry on cold starts), those 49 IDs would trigger Redis lookups or even API re-fetches. Incremental diff avoids all of this for known videos.
+
+### Incremental Diff (Liked Videos)
+
+Liked videos use a variant of the same strategy. The `videos.list?myRating=like` API returns full details directly (no separate hydration step), so the diff uses a two-phase approach:
+
+1. **ID-only fetch** — `videos.list` with `part=id, myRating=like, maxResults=50` (1 API unit, ~2KB response). This returns just the video IDs in liked order.
+2. **Compare** — if the ID list matches cached items exactly (same IDs, same order), refresh the cache TTL and return cached data.
+3. **Diff + selective hydration** — if IDs differ, identify new IDs not in the cached result, call `getVideoDetails()` on only those, and merge with cached `VideoItem` objects.
+
+This is strictly better than a 1-item head check because it catches ALL changes (not just position 0) at the same 1-unit cost, and enables incremental hydration on the changed path.
+
+**Where incremental diff is NOT applied:**
+
+- **`fetchUploadsBatch`** — stores lightweight refs `{id, publishedAt}` with no hydration step. Re-fetching 10 refs is negligible.
+- **`getTrending`** — trending lists reorder chaotically (not just prepends), so cached items may not appear in the new result at all. Full re-fetch is correct.
+- **Search** — relevance-ranked, volatile, and costs 100 units per call. Not cached with revalidation.
 
 ### Quota Impact
 
 In the common case where nothing has changed (which is the vast majority of revalidations):
 
-| Without Smart Revalidation                                         | With Smart Revalidation                                  | Savings                         |
-| ------------------------------------------------------------------ | -------------------------------------------------------- | ------------------------------- |
-| `playlistItems.list` (1 unit) + `videos.list` for details (1 unit) | `playlistItems.list` with maxResults=1 (1 unit)          | 1 unit per revalidation         |
-| `videos.list` trending full page (1 unit)                          | `videos.list` with part=id, maxResults=1 (1 unit)        | 0 units but much less bandwidth |
-| `subscriptions.list` full page (1 unit)                            | `subscriptions.list` with part=id, maxResults=1 (1 unit) | 0 units but much less bandwidth |
+| Without Smart Revalidation                                         | With Smart Revalidation                                  | Savings                                                             |
+| ------------------------------------------------------------------ | -------------------------------------------------------- | ------------------------------------------------------------------- |
+| `playlistItems.list` (1 unit) + `videos.list` for details (1 unit) | `playlistItems.list` with maxResults=1 (1 unit)          | 1 unit per revalidation                                             |
+| `videos.list` trending full page (1 unit)                          | `videos.list` with part=id, maxResults=1 (1 unit)        | 0 units but much less bandwidth                                     |
+| `subscriptions.list` full page (1 unit)                            | `subscriptions.list` with part=id, maxResults=1 (1 unit) | 0 units but much less bandwidth                                     |
+| `videos.list` liked full page (1 unit)                             | `videos.list` with part=id, maxResults=50 (1 unit)       | 0 units but much less bandwidth; enables incremental diff on change |
+
+When data HAS changed, incremental diff further reduces cost:
+
+| Without Incremental Diff                                                 | With Incremental Diff                                                     | Savings                               |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------- | ------------------------------------- |
+| Head check (1) + playlistItems (1) + getVideoDetails for 50 IDs (1 unit) | Head check (1) + playlistItems (1) + getVideoDetails for 1-5 new IDs only | Skip hydration of 45-49 cached videos |
 
 The real savings compound with the per-ID video cache: when a playlist hasn't changed, the head check avoids not only the playlist re-fetch but also the `getVideoDetails()` call that would follow it. With 24h per-ID TTLs, the video details are likely still cached — but without the head check, the system would still need to resolve all 50 IDs from the playlist before discovering they're cached.
 
@@ -390,8 +435,8 @@ Runs before shorts filtering to avoid wasting HEAD probes on videos that would b
 - **Missing ID or title** — ghost entries from deleted/private videos
 - **No thumbnail** — unavailable videos with no visual representation
 - **Upcoming broadcasts** — `liveBroadcastContent === 'upcoming'`, these have no playable content yet and appear as blank cards
-- **Empty duration, not live** — videos with no duration string (not `P0D`/`PT0S`, but literally empty) that aren't live streams. These are typically unprocessed, broken, or premiere placeholders.
-- **Zero duration AND zero views** — completely empty ghost entries
+- **Zero views** — videos with 0 views are almost always unprocessed live stream replays (e.g., CNN/MSNBC just-ended streams with placeholder thumbnails), ghost entries, or just-created placeholders. No video in trending or subscription feeds should have 0 views.
+- **Zero/empty duration, not live** — videos with no duration or zero duration (`P0D`/`PT0S`) that aren't live streams. These are typically unprocessed, broken, or premiere placeholders.
 
 Additionally, the `getTrending()` function specifically filters out both `upcoming` AND `live` broadcasts from the trending feed, as live streams often appear as blank preview cards in the UI.
 
