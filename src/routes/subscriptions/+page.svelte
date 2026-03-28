@@ -67,9 +67,9 @@
 </svelte:head>
 
 <div class="mx-auto max-w-screen-2xl px-4 py-4">
+	<h1 class="mb-4 text-xl font-bold">Subscriptions</h1>
 	{#await data.streamed.subData}
 		<section class="mb-6">
-			<div class="bg-yt-surface mb-3 h-5 w-32 animate-pulse rounded"></div>
 			<div class="flex gap-4 overflow-hidden">
 				{#each Array(8) as _unused, i (i)}
 					<div class="flex shrink-0 flex-col items-center gap-2">
@@ -89,7 +89,6 @@
 	{:then subData}
 		{#if subData.subscriptions && subData.subscriptions.length > 0}
 			<section class="mb-6">
-				<h2 class="mb-3 text-lg font-medium">Subscriptions</h2>
 				<ChannelBar
 					channels={subData.subscriptions.map((s) => ({
 						id: s.id,

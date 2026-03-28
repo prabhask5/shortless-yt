@@ -144,10 +144,10 @@
 
 <div class="mx-auto max-w-screen-2xl px-4 py-4">
 	{#if data.authenticated && 'streamed' in data && data.streamed.authData}
+		<h1 class="mb-4 text-xl font-bold">My Curated Feed</h1>
 		{#await data.streamed.authData}
 			<!-- Skeleton: subscription bar placeholder + video grid -->
 			<section class="mb-6">
-				<div class="bg-yt-surface mb-3 h-5 w-32 animate-pulse rounded"></div>
 				<div class="flex gap-4 overflow-hidden">
 					{#each Array(8) as _unused, i (i)}
 						<div class="flex shrink-0 flex-col items-center gap-2">
@@ -163,7 +163,6 @@
 		{:then authData}
 			{#if authData.subscriptions && authData.subscriptions.length > 0}
 				<section class="mb-6">
-					<h2 class="mb-3 text-lg font-medium">Subscriptions</h2>
 					<ChannelBar
 						channels={authData.subscriptions.map((s) => ({
 							id: s.id,
@@ -197,6 +196,7 @@
 			<p class="text-yt-text-secondary py-8 text-center">Failed to load feed.</p>
 		{/await}
 	{:else if 'streamed' in data && data.streamed.anonData}
+		<h1 class="mb-4 text-xl font-bold">Trending Videos</h1>
 		{#await data.streamed.anonData}
 			<!-- Skeleton: chip bar placeholder + video grid -->
 			<section class="mb-4">
