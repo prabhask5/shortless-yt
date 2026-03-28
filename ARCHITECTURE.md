@@ -77,15 +77,17 @@ return {
 };
 ```
 
-| Page        | Blocking                  | Streamed                        |
-| ----------- | ------------------------- | ------------------------------- |
-| Home (anon) | —                         | trending + categories           |
-| Home (auth) | —                         | subscriptions + feed            |
-| Watch       | video details             | channel info, comments, related |
-| Channel     | channel details (for 404) | videos + subscription status    |
-| Search      | —                         | search results                  |
-| Playlist    | playlist metadata         | — (videos are blocking)         |
-| Liked       | —                         | liked videos                    |
+| Page          | Blocking                  | Streamed                         |
+| ------------- | ------------------------- | -------------------------------- |
+| Home (anon)   | —                         | trending + categories            |
+| Home (auth)   | —                         | subscriptions bar + curated feed |
+| Subscriptions | —                         | subscriptions bar + subfeed      |
+| Watch         | video details             | channel info, comments, related  |
+| Channel       | channel details (for 404) | videos + subscription status     |
+| Search        | —                         | search results                   |
+| Playlist      | playlist metadata         | — (videos are blocking)          |
+| Liked         | —                         | liked videos                     |
+| My Playlists  | playlists list            | —                                |
 
 ---
 
@@ -120,16 +122,45 @@ YouTube has no "list videos by channel" endpoint. `getChannelVideos()` resolves 
 
 This means channel uploads and explicit playlist pages share the same `plvideos:` cache. Visiting a channel page, watching a video from that channel (sidebar "more from channel"), and browsing the same uploads playlist all hit the same cache entries.
 
-### Subscription Feed: K-Way Merge of All Channels
+### Curated Feed: Random Pool from Subscription History (Home Page, Auth)
 
-YouTube has no subscription feed API endpoint. We build one manually:
+The authenticated home page ("My Curated Feed") shows a weighted-random mix of videos drawn from across the user's entire subscription history — not just the most recent uploads. This surfaces videos the chronological feed would never show again.
+
+#### Pool Building (`buildCuratedPool`)
+
+On first load (and once per month thereafter):
+
+1. **Reuse playlist IDs** — the subscription playlist ID list (`user:subfeed:plids:{userId}`) is shared with the subscription feed. If it's already cached, no extra API calls are needed.
+2. **Warm page-1 batches from Redis** — a single `MGET` warms all channels' page-1 results from Redis into L1. If the subscription feed was recently loaded, this is entirely free.
+3. **Skip page 1, crawl all remaining pages per channel in parallel** — page 1 videos are already in the chronological subscription feed. For each channel, the pool crawls pages 2 through exhaustion (up to 50 pages, i.e. up to ~500 videos per channel). This runs concurrently across all channels.
+4. **Weighted shuffle (Efraimidis-Spirakis)** — each video is assigned a random key `Math.random() ^ (1 / weight)`, then the list is sorted descending. Weights: pages 2–3 → 1, pages 4–7 → 2, pages 8+ → 3. Older videos appear more often but newer videos can still surface.
+5. **Cache for 30 days** — pool building is expensive (up to ~500 quota units on first build for a user with 50 subscriptions), but it only runs once a month. Redis stores the pool at 60-day effective TTL.
+
+#### Serving Pages (`getCuratedFeed`)
+
+- On the **first call** (no cursor), a random `startOffset` is chosen: `Math.floor(Math.random() * pool.length)`. This makes the first videos shown different on every page reload.
+- Subsequent calls advance linearly from that offset, guaranteeing no repeats within a session.
+- The cursor is `{startOffset, consumed}` — simple and small (~40 bytes).
+
+#### Cold Build Cost
+
+| Scenario                                             | API units           |
+| ---------------------------------------------------- | ------------------- |
+| Page-1 batches all cached (sub feed loaded recently) | 0 for page 1        |
+| Pages 2–N: 50 channels × avg 8 pages                 | ~400 units one-time |
+| Amortized over 30 days                               | ~13 units/day       |
+
+### Subscription Feed: K-Way Merge of All Channels (Subscriptions Page)
+
+The `/subscriptions` page shows a chronological feed of recent uploads from all subscribed channels:
 
 1. **Discover all subscriptions** — paginate through every page of the user's subscriptions (YouTube returns 50 per page). For a user with 200 subscriptions, this is 4 API calls — all cached at 4h (12h effective in L1).
 2. **Resolve uploads playlists** — batch-fetch `contentDetails` for all channel IDs (50 per request). Each channel's uploads playlist ID is cached at `ch:uploads:{channelId}` for 24h. The full list of playlist IDs is cached at `user:subfeed:plids:{channelId}` for 4h.
-3. **Fetch initial batches** — fetch the 10 most recent uploads from each channel's playlist in parallel. Each batch is cached at `subfeed:batch:{playlistId}` for 2h with [smart revalidation](#smart-revalidation) — a 1-item head check determines if a channel has new uploads before doing a full re-fetch.
-4. **K-way merge** — a linear scan picks the channel whose top buffered video has the most recent `publishedAt`. When a channel's buffer is exhausted, its next page is fetched on demand.
-5. **Lazy hydration** — after selecting 20 videos, call `getVideoDetails()` on only those 20 IDs. Videos that were buffered but not selected are never hydrated — this is quota-efficient.
-6. **Cursor-based pagination** — return a serializable cursor (`SubFeedCursor`: array of `{playlistId, offset, fetchToken, nextToken}`) that allows the client to resume the merge from where it left off.
+3. **Warm all channel batches via MGET** — before fetching any channel's page-1 batch, a single Redis `MGET` pre-warms all of them in L1. This collapses N Redis round trips into 1, saving ~N-1 Redis commands per subfeed page load.
+4. **Fetch initial batches** — fetch the 10 most recent uploads from each channel's playlist in parallel. Each batch is cached at `subfeed:batch:{playlistId}` for 2h with [smart revalidation](#smart-revalidation) — a 1-item head check determines if a channel has new uploads before doing a full re-fetch.
+5. **K-way merge** — a linear scan picks the channel whose top buffered video has the most recent `publishedAt`. When a channel's buffer is exhausted, its next page is fetched on demand.
+6. **Lazy hydration** — after selecting 20 videos, call `getVideoDetails()` on only those 20 IDs. Videos that were buffered but not selected are never hydrated — this is quota-efficient.
+7. **Cursor-based pagination** — return a serializable cursor (`SubFeedCursor`: array of `{playlistId, offset, fetchToken, nextToken}`) that allows the client to resume the merge from where it left off.
 
 **Why include all channels?** Earlier versions capped at 15 channels, which caused the subscription feed to miss content from many subscribed channels. The k-way merge is inherently lazy — it only fetches the next page from a channel when that channel's buffer is exhausted AND that channel is competitive in the merge order. Channels that haven't uploaded recently sit idle in the buffer and cost nothing beyond the initial 10-item fetch (which is cached aggressively).
 
@@ -160,10 +191,27 @@ Applied to: `searchVideos`, `getTrending`, `getPlaylistVideos`, `getComments`, `
 `getVideoDetails(ids[])`, `getChannelDetails(ids[])`, and `getPlaylistDetails(ids[])` follow the same three-layer lookup:
 
 1. **L1 (in-memory):** Check `publicCache.get("video:{id}")` for each ID
-2. **L2 (Redis):** Batch-fetch all L1 misses via `publicCache.getWithRedis()` — promotes hits back to L1
+2. **L2 (Redis MGET):** All L1 misses are batch-fetched in a single `warmBatchFromRedis()` call — one HTTP round trip regardless of how many IDs are missing. Hits are promoted back to L1.
 3. **API:** Batch-fetch remaining IDs in groups of 50 (YouTube's max per request)
 
-This means if 20 videos are requested and 15 are in L1, 3 are in Redis, only 2 hit the YouTube API. Per-ID caching is the cornerstone of cross-endpoint data sharing: a video encountered through trending, search, a channel page, or a playlist all maps to the same `video:{id}` cache entry.
+This means if 20 videos are requested and 15 are in L1, 3 are in Redis, only 2 hit the YouTube API — and the Redis lookup is a single MGET rather than 5 individual GETs. Per-ID caching is the cornerstone of cross-endpoint data sharing: a video encountered through trending, search, a channel page, or a playlist all maps to the same `video:{id}` cache entry.
+
+### `warmBatchFromRedis` — Generic MGET Pre-Warming
+
+`cache.warmBatchFromRedis<T>(entries[])` collapses N individual Redis GETs into one MGET:
+
+1. For each key, check L1 first — L1 hits are returned immediately at zero cost
+2. All L1 misses are collected and fetched in one Redis `MGET` call
+3. Redis hits are written back to L1 and returned
+
+This is used in three hot paths:
+
+- **Detail fetchers** (`getVideoDetails`, `getChannelDetails`, `getPlaylistDetails`) — batch-warm all requested IDs before falling through to the API
+- **Subscription feed init** — warm all channels' page-1 batches before the parallel fetch
+- **Subscription feed resume** — warm all channels' current-page batches before resuming the k-way merge
+- **Curated pool builder** — warm page-1 batches from Redis before starting the deep crawl
+
+Without this, a 50-channel subfeed load on a cold serverless start would issue 50 sequential Redis GETs (~250ms). With MGET, it's 1 call (~5ms).
 
 ### Autocomplete
 
@@ -216,46 +264,52 @@ After `expiresAt`, the entry is evicted and a full fetch is required.
 
 - Lazily initialized on first use
 - Checks three env var names in order: `SHORTLESS_YT_CACHE_KV_URL`, `UPSTASH_REDIS_REST_URL`, `KV_REST_API_URL` (compatible with Vercel KV naming)
-- `redisMGet(keys[])` — batch-fetches multiple keys in one HTTP round trip (used by shorts detection)
+- `redisMGet(keys[])` — batch-fetches multiple keys in one HTTP round trip. Used heavily by `warmBatchFromRedis` to collapse N individual GETs into 1 — critical for subfeed (50+ channels) and detail fetchers.
 - `redisMSet(entries[])` — batch-writes via Redis pipeline (fire-and-forget)
 - All operations are wrapped in try/catch — Redis failures never crash the app
+- **Circuit breaker:** If Redis returns a rate limit or daily quota error, `redisDisabledUntil` is set to `now + 5 minutes`. All subsequent Redis calls short-circuit (return null/empty) for that window. This prevents Redis quota exhaustion from cascading into a flood of YouTube API calls. The breaker resets automatically after 5 minutes.
 
 ### TTL Values
 
-| Data                                    | Nominal TTL | L1 Effective (3x) | L2 Effective (2x) | Rationale                                                                                                                     |
-| --------------------------------------- | ----------- | ----------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Video/channel/playlist details (per-ID) | 24 hours    | 72 hours          | 48 hours          | Metadata is essentially immutable (title, duration, description never change; view counts being slightly stale is acceptable) |
-| Trending videos                         | 2 hours     | 6 hours           | 4 hours           | Trending list rotates slowly; smart revalidation catches changes cheaply                                                      |
-| Playlist videos                         | 2 hours     | 6 hours           | 4 hours           | Channels upload at most a few times per day; head check catches new uploads                                                   |
-| Subfeed upload batches                  | 2 hours     | 6 hours           | 4 hours           | Same as playlist videos — shared revalidation logic                                                                           |
-| Search results                          | 2 hours     | 6 hours           | 4 hours           | Search costs 100 units per call — longer TTL conserves quota; smart revalidation is impossible (search is always 100 units)   |
-| Comments                                | 1 hour      | 3 hours           | 2 hours           | New comments appear, but stale comments are acceptable                                                                        |
-| Subscriptions list                      | 4 hours     | 12 hours          | 8 hours           | Users rarely subscribe/unsubscribe; count check catches changes                                                               |
-| Subscription status                     | 4 hours     | 12 hours          | 8 hours           | Binary value, rarely changes                                                                                                  |
-| User profile                            | 4 hours     | 12 hours          | 8 hours           | Avatar and channel name almost never change                                                                                   |
-| Liked videos                            | 1 hour      | 3 hours           | 2 hours           | Users like videos more frequently; smart revalidation catches changes cheaply                                                 |
-| User playlists                          | 1 hour      | 3 hours           | 2 hours           | Moderate change frequency                                                                                                     |
-| Autocomplete suggestions                | 10 minutes  | 30 minutes        | 20 minutes        | Low-cost (no API quota), freshness matters for UX                                                                             |
-| Channel uploads playlist ID             | 24 hours    | 72 hours          | 48 hours          | Immutable — a channel's uploads playlist ID never changes                                                                     |
-| Video categories                        | 24 hours    | 72 hours          | 48 hours          | YouTube rarely adds/removes categories                                                                                        |
-| Shorts detection (Redis only)           | 7 days      | —                 | 7 days            | A video's Short status is permanent                                                                                           |
-| Subfeed playlist ID list                | 4 hours     | 12 hours          | 8 hours           | Changes only when user subscribes/unsubscribes                                                                                |
+| Data                                    | Nominal TTL | L1 Effective (3x) | L2 Effective (2x) | Rationale                                                                                                                               |
+| --------------------------------------- | ----------- | ----------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Video/channel/playlist details (per-ID) | 24 hours    | 72 hours          | 48 hours          | Metadata is essentially immutable (title, duration, description never change; view counts being slightly stale is acceptable)           |
+| Trending videos                         | 2 hours     | 6 hours           | 4 hours           | Trending list rotates slowly; smart revalidation catches changes cheaply                                                                |
+| Playlist videos                         | 2 hours     | 6 hours           | 4 hours           | Channels upload at most a few times per day; head check catches new uploads                                                             |
+| Subfeed upload batches                  | 2 hours     | 6 hours           | 4 hours           | Same as playlist videos — shared revalidation logic                                                                                     |
+| Search results                          | 24 hours    | 72 hours          | 48 hours          | Search costs 100 units per call — long TTL strongly conserves quota; smart revalidation is impossible (search is always 100 units)      |
+| Comments                                | 1 hour      | 3 hours           | 2 hours           | New comments appear, but stale comments are acceptable                                                                                  |
+| Subscriptions list                      | 4 hours     | 12 hours          | 8 hours           | Users rarely subscribe/unsubscribe; count check catches changes                                                                         |
+| Subscription status                     | 4 hours     | 12 hours          | 8 hours           | Binary value, rarely changes                                                                                                            |
+| User profile                            | 4 hours     | 12 hours          | 8 hours           | Avatar and channel name almost never change                                                                                             |
+| Liked videos                            | 1 hour      | 3 hours           | 2 hours           | Users like videos more frequently; smart revalidation catches changes cheaply                                                           |
+| User playlists (paginated)              | 24 hours    | 72 hours          | 48 hours          | Playlists change rarely; long TTL avoids redundant calls                                                                                |
+| My playlists (filtered flat list)       | 24 hours    | 72 hours          | 48 hours          | Same as above — full list rebuilt once per day                                                                                          |
+| Curated feed pool                       | 30 days     | 90 days           | 60 days           | Expensive to build (crawls all subscription pages 2+); pool is the entire subscription video history — doesn't need frequent rebuilding |
+| Autocomplete suggestions                | 10 minutes  | 30 minutes        | 20 minutes        | Low-cost (no API quota), freshness matters for UX                                                                                       |
+| Channel uploads playlist ID             | 24 hours    | 72 hours          | 48 hours          | Immutable — a channel's uploads playlist ID never changes                                                                               |
+| Video categories                        | 24 hours    | 72 hours          | 48 hours          | YouTube rarely adds/removes categories                                                                                                  |
+| Shorts detection (Redis only)           | 7 days      | —                 | 7 days            | A video's Short status is permanent                                                                                                     |
+| Subfeed playlist ID list                | 4 hours     | 12 hours          | 8 hours           | Shared between subscription feed and curated pool builder; changes only when user subscribes/unsubscribes                               |
 
 ### Cache Key Design
 
 Human-readable, colon-separated, with `encodeURIComponent()` on user-controlled segments to prevent cache key collisions:
 
 ```
-trending:20:              — trending, category 20, first page
-search:v:cats::medium:    — video search for "cats", medium duration
-video:abc123              — individual video detail (shared by all endpoints)
-channel:UC123             — individual channel detail
-ch:uploads:UC123          — uploads playlist ID for a channel
-plvideos:UU...:           — playlist videos (shared by channel page, watch sidebar, playlist page)
-subfeed:batch:UU...:      — subscription feed upload batch for a channel
-user:subs:<channelId>:    — subscriptions keyed by user's YouTube channel ID
-user:subfeed:plids:<channelId> — all uploads playlist IDs for a user's subscriptions
-short2:abc123             — shorts detection result (Redis only)
+trending:20:                    — trending, category 20, first page
+search:v:cats::medium:          — video search for "cats", medium duration
+video:abc123                    — individual video detail (shared by all endpoints)
+channel:UC123                   — individual channel detail
+ch:uploads:UC123                — uploads playlist ID for a channel
+plvideos:UU...:                 — playlist videos (shared by channel page, watch sidebar, playlist page)
+subfeed:batch:UU...:            — subscription feed upload batch for a channel
+user:subs:<channelId>:          — subscriptions keyed by user's YouTube channel ID
+user:subfeed:plids:<channelId>  — all uploads playlist IDs for a user's subscriptions (shared by subfeed + curated pool)
+user:curatedpool:<channelId>    — shuffled video ID pool for curated home feed (30-day TTL)
+user:playlists:<channelId>:     — paginated user playlist results
+user:myplaylists:<channelId>    — filtered flat list of user-created playlists
+short2:abc123                   — shorts detection result (Redis only)
 ```
 
 ### Cache Unification Strategy
@@ -608,39 +662,47 @@ Configured declaratively in `svelte.config.js`:
 
 ```
 src/
-├── hooks.server.ts              # Rate limiting + session hydration
+├── hooks.server.ts              # Rate limiting + session hydration + token refresh
 ├── app.html                     # HTML shell
 ├── lib/
 │   ├── types.ts                 # Shared TypeScript interfaces
 │   ├── server/
 │   │   ├── youtube.ts           # YouTube API client (all API calls + smart revalidation)
-│   │   ├── cache.ts             # Two-layer TTL cache (L1 + L2 + stale-while-revalidate)
-│   │   ├── redis.ts             # Upstash Redis client
+│   │   ├── cache.ts             # Two-layer TTL cache (L1 + L2 + stale-while-revalidate + warmBatchFromRedis)
+│   │   ├── redis.ts             # Upstash Redis client (MGET/MSET batching + circuit breaker)
 │   │   ├── shorts.ts            # Shorts detection + broken video filtering pipeline
 │   │   ├── auth.ts              # OAuth2 + AES-256-GCM sessions
 │   │   └── env.ts               # Typed env var accessors
 │   ├── components/
-│   │   ├── Header.svelte        # Top nav with search + user menu
+│   │   ├── Header.svelte        # Top nav with search + user menu (links: Subscriptions, Liked, My Playlists)
 │   │   ├── VideoCard.svelte     # Video thumbnail card (vertical/horizontal)
-│   │   ├── VirtualFeed.svelte   # Infinite scroll grid
+│   │   ├── PlaylistCard.svelte  # Playlist thumbnail card
+│   │   ├── ChannelBar.svelte    # Horizontal scrollable channel avatar strip
+│   │   ├── VirtualFeed.svelte   # Infinite scroll grid (IntersectionObserver)
 │   │   ├── SearchBar.svelte     # Search input with autocomplete
-│   │   ├── CategoryChips.svelte # Category filter chips
+│   │   ├── CategoryChips.svelte # Category filter chips (anon home page)
+│   │   ├── FilterChips.svelte   # Generic filter chips
 │   │   ├── CommentSection.svelte
 │   │   ├── VideoPlayer.svelte   # YouTube embed wrapper
+│   │   ├── SlowLoadNotice.svelte # "Taking longer than usual" notice during streaming
+│   │   ├── Skeleton.svelte      # YouTube-style loading skeleton placeholders
 │   │   └── ReloadPrompt.svelte  # PWA update toast
 │   └── stores/
 │       ├── auth.ts              # Client-side auth state
 │       └── columns.svelte.ts    # Responsive column count
 └── routes/
     ├── +layout.server.ts        # User profile + quota status
-    ├── +page.server.ts          # Home (trending or subfeed)
+    ├── +page.server.ts          # Home: curated feed (auth) or trending (anon)
+    ├── subscriptions/           # Chronological subscription k-way merge feed (auth-gated)
     ├── watch/                   # Video player page
     ├── channel/[id]/            # Channel page
-    ├── search/                  # Search results
+    ├── search/                  # Search results (manual "Load more" — search costs 100 units/call)
     ├── playlist/[id]/           # Playlist page
     ├── liked/                   # Liked videos (auth-gated)
+    ├── playlists/               # User-created playlists grid (auth-gated, excludes LL/WL)
     └── api/
-        ├── videos/              # Unified pagination endpoint
+        ├── videos/              # Unified pagination endpoint (trending, channel, liked, search,
+        │                        #   playlist, subfeed, curated)
         ├── suggest/             # Autocomplete proxy
         ├── comments/            # Comment pagination
         └── auth/                # Login, callback, logout

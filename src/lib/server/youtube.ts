@@ -57,7 +57,7 @@ const ONE_HOUR = 60 * 60 * 1000;
 const TWO_HOURS = 2 * 60 * 60 * 1000;
 const FOUR_HOURS = 4 * 60 * 60 * 1000;
 const ONE_DAY = 24 * 60 * 60 * 1000;
-const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+const ONE_MONTH = 30 * 24 * 60 * 60 * 1000;
 
 // ===================================================================
 // Request coalescing (singleflight)
@@ -1994,7 +1994,7 @@ export async function getSubscriptionFeed(
  */
 async function buildCuratedPool(userId: string, accessToken: string): Promise<string[]> {
 	const cacheKey = `user:curatedpool:${userId}`;
-	const cached = await userCache.getWithRedis<string[]>(cacheKey, SEVEN_DAYS);
+	const cached = await userCache.getWithRedis<string[]>(cacheKey, ONE_MONTH);
 	if (cached) return cached;
 
 	// Reuse the subscription playlist ID list from the subfeed (cached at 4h)
@@ -2094,7 +2094,7 @@ async function buildCuratedPool(userId: string, accessToken: string): Promise<st
 	weighted.sort((a, b) => b.key - a.key);
 	const allIds = weighted.map((e) => e.id);
 
-	userCache.set(cacheKey, allIds, SEVEN_DAYS);
+	userCache.set(cacheKey, allIds, ONE_MONTH);
 	return allIds;
 }
 
