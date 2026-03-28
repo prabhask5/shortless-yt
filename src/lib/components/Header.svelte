@@ -123,13 +123,15 @@
 					aria-label="Subscriptions"
 				>
 					<svg class="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
-						<!-- Three channel avatar circles -->
-						<circle cx="4.5" cy="7" r="2.5" />
-						<circle cx="12" cy="7" r="2.5" />
-						<circle cx="19.5" cy="7" r="2.5" />
-						<!-- Feed lines representing video items -->
-						<rect x="2" y="13" width="20" height="2" rx="1" />
-						<rect x="2" y="18" width="20" height="2" rx="1" />
+						<!-- Two stacked lines (shorter on top, wider below) -->
+						<rect x="6" y="1" width="12" height="2" rx="1" />
+						<rect x="3" y="4.5" width="18" height="2" rx="1" />
+						<!-- Rounded video card with play button cutout -->
+						<path
+							fill-rule="evenodd"
+							clip-rule="evenodd"
+							d="M3.5 8.5H20.5a2.5 2.5 0 0 1 2.5 2.5v9a2.5 2.5 0 0 1-2.5 2.5H3.5A2.5 2.5 0 0 1 1 20v-9a2.5 2.5 0 0 1 2.5-2.5zM8 13v6l9-3z"
+						/>
 					</svg>
 				</a>
 			{/if}

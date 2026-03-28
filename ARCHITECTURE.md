@@ -128,13 +128,24 @@ The authenticated home page ("My Curated Feed") shows a weighted-random mix of v
 
 #### Pool Building (`buildCuratedPool`)
 
-On first load (and once per month thereafter):
+The pool is built once and then **updated incrementally** — only newly subscribed channels are crawled. The cache stores both the video IDs and the playlist IDs used to build them, enabling cheap diffs.
+
+**First build:**
 
 1. **Reuse playlist IDs** — the subscription playlist ID list (`user:subfeed:plids:{userId}`) is shared with the subscription feed. If it's already cached, no extra API calls are needed.
 2. **Warm page-1 batches from Redis** — a single `MGET` warms all channels' page-1 results from Redis into L1. If the subscription feed was recently loaded, this is entirely free.
 3. **Skip page 1, crawl all remaining pages per channel in parallel** — page 1 videos are already in the chronological subscription feed. For each channel, the pool crawls pages 2 through exhaustion (up to 50 pages, i.e. up to ~500 videos per channel). This runs concurrently across all channels.
 4. **Weighted shuffle (Efraimidis-Spirakis)** — each video is assigned a random key `Math.random() ^ (1 / weight)`, then the list is sorted descending. Weights: pages 2–3 → 1, pages 4–7 → 2, pages 8+ → 3. Older videos appear more often but newer videos can still surface.
-5. **Cache for 30 days** — pool building is expensive (up to ~500 quota units on first build for a user with 50 subscriptions), but it only runs once a month. Redis stores the pool at 60-day effective TTL.
+5. **Cache for 30 days** — stored as `{ ids: string[], playlistIds: string[] }`. Redis stores at 60-day effective TTL.
+
+**Incremental update (new subscription added):**
+
+1. Diff current `playlistIds` against the stored `playlistIds`.
+2. Crawl only the newly added channels (pages 2+ with weighted shuffle).
+3. Prepend new video IDs to the existing pool — new channels get immediate presence.
+4. Update stored `playlistIds`. No full rebuild needed.
+
+**Removed subscriptions:** Videos from unsubscribed channels stay in the pool until the 30-day full rebuild. They're still valid YouTube videos and won't break the watch page.
 
 #### Serving Pages (`getCuratedFeed`)
 
@@ -271,26 +282,26 @@ After `expiresAt`, the entry is evicted and a full fetch is required.
 
 ### TTL Values
 
-| Data                                    | Nominal TTL | L1 Effective (3x) | L2 Effective (2x) | Rationale                                                                                                                               |
-| --------------------------------------- | ----------- | ----------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Video/channel/playlist details (per-ID) | 24 hours    | 72 hours          | 48 hours          | Metadata is essentially immutable (title, duration, description never change; view counts being slightly stale is acceptable)           |
-| Trending videos                         | 2 hours     | 6 hours           | 4 hours           | Trending list rotates slowly; smart revalidation catches changes cheaply                                                                |
-| Playlist videos                         | 2 hours     | 6 hours           | 4 hours           | Channels upload at most a few times per day; head check catches new uploads                                                             |
-| Subfeed upload batches                  | 2 hours     | 6 hours           | 4 hours           | Same as playlist videos — shared revalidation logic                                                                                     |
-| Search results                          | 24 hours    | 72 hours          | 48 hours          | Search costs 100 units per call — long TTL strongly conserves quota; smart revalidation is impossible (search is always 100 units)      |
-| Comments                                | 1 hour      | 3 hours           | 2 hours           | New comments appear, but stale comments are acceptable                                                                                  |
-| Subscriptions list                      | 4 hours     | 12 hours          | 8 hours           | Users rarely subscribe/unsubscribe; count check catches changes                                                                         |
-| Subscription status                     | 4 hours     | 12 hours          | 8 hours           | Binary value, rarely changes                                                                                                            |
-| User profile                            | 4 hours     | 12 hours          | 8 hours           | Avatar and channel name almost never change                                                                                             |
-| Liked videos                            | 1 hour      | 3 hours           | 2 hours           | Users like videos more frequently; smart revalidation catches changes cheaply                                                           |
-| User playlists (paginated)              | 24 hours    | 72 hours          | 48 hours          | Playlists change rarely; long TTL avoids redundant calls                                                                                |
-| My playlists (filtered flat list)       | 24 hours    | 72 hours          | 48 hours          | Same as above — full list rebuilt once per day                                                                                          |
-| Curated feed pool                       | 30 days     | 90 days           | 60 days           | Expensive to build (crawls all subscription pages 2+); pool is the entire subscription video history — doesn't need frequent rebuilding |
-| Autocomplete suggestions                | 10 minutes  | 30 minutes        | 20 minutes        | Low-cost (no API quota), freshness matters for UX                                                                                       |
-| Channel uploads playlist ID             | 24 hours    | 72 hours          | 48 hours          | Immutable — a channel's uploads playlist ID never changes                                                                               |
-| Video categories                        | 24 hours    | 72 hours          | 48 hours          | YouTube rarely adds/removes categories                                                                                                  |
-| Shorts detection (Redis only)           | 7 days      | —                 | 7 days            | A video's Short status is permanent                                                                                                     |
-| Subfeed playlist ID list                | 4 hours     | 12 hours          | 8 hours           | Shared between subscription feed and curated pool builder; changes only when user subscribes/unsubscribes                               |
+| Data                                    | Nominal TTL | L1 Effective (3x) | L2 Effective (2x) | Rationale                                                                                                                                |
+| --------------------------------------- | ----------- | ----------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Video/channel/playlist details (per-ID) | 24 hours    | 72 hours          | 48 hours          | Metadata is essentially immutable (title, duration, description never change; view counts being slightly stale is acceptable)            |
+| Trending videos                         | 2 hours     | 6 hours           | 4 hours           | Trending list rotates slowly; smart revalidation catches changes cheaply                                                                 |
+| Playlist videos                         | 2 hours     | 6 hours           | 4 hours           | Channels upload at most a few times per day; head check catches new uploads                                                              |
+| Subfeed upload batches                  | 2 hours     | 6 hours           | 4 hours           | Same as playlist videos — shared revalidation logic                                                                                      |
+| Search results                          | 24 hours    | 72 hours          | 48 hours          | Search costs 100 units per call — long TTL strongly conserves quota; smart revalidation is impossible (search is always 100 units)       |
+| Comments                                | 1 hour      | 3 hours           | 2 hours           | New comments appear, but stale comments are acceptable                                                                                   |
+| Subscriptions list                      | 4 hours     | 12 hours          | 8 hours           | Users rarely subscribe/unsubscribe; count check catches changes                                                                          |
+| Subscription status                     | 1 hour      | 3 hours           | 2 hours           | Reduced from 4h — subscribe/unsubscribe on the channel page reflects within 1h                                                           |
+| User profile                            | 4 hours     | 12 hours          | 8 hours           | Avatar and channel name almost never change                                                                                              |
+| Liked videos                            | 1 hour      | 3 hours           | 2 hours           | Users like videos more frequently; smart revalidation catches changes cheaply                                                            |
+| User playlists (paginated)              | 24 hours    | 72 hours          | 48 hours          | Playlists change rarely; long TTL avoids redundant calls                                                                                 |
+| My playlists (filtered flat list)       | 24 hours    | 72 hours          | 48 hours          | Same as above — full list rebuilt once per day                                                                                           |
+| Curated feed pool                       | 30 days     | 90 days           | 60 days           | Expensive on first build; updated incrementally when new channels added (only new channels crawled); removed channels stay until rebuild |
+| Autocomplete suggestions                | 10 minutes  | 30 minutes        | 20 minutes        | Low-cost (no API quota), freshness matters for UX                                                                                        |
+| Channel uploads playlist ID             | 24 hours    | 72 hours          | 48 hours          | Immutable — a channel's uploads playlist ID never changes                                                                                |
+| Video categories                        | 24 hours    | 72 hours          | 48 hours          | YouTube rarely adds/removes categories                                                                                                   |
+| Shorts detection (Redis only)           | 7 days      | —                 | 7 days            | A video's Short status is permanent                                                                                                      |
+| Subfeed playlist ID list                | 4 hours     | 12 hours          | 8 hours           | Shared between subscription feed and curated pool builder; changes only when user subscribes/unsubscribes                                |
 
 ### Cache Key Design
 

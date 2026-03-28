@@ -1435,7 +1435,7 @@ export async function checkSubscription(
 	channelId: string
 ): Promise<boolean> {
 	const cacheKey = `user:sub:${userId}:${channelId}`;
-	const cached = await userCache.getWithRedis<boolean>(cacheKey, FOUR_HOURS);
+	const cached = await userCache.getWithRedis<boolean>(cacheKey, ONE_HOUR);
 	if (cached !== undefined) return cached;
 
 	try {
@@ -1451,7 +1451,7 @@ export async function checkSubscription(
 
 		const items = (data.items as unknown[]) ?? [];
 		const isSubscribed = items.length > 0;
-		userCache.set(cacheKey, isSubscribed, FOUR_HOURS);
+		userCache.set(cacheKey, isSubscribed, ONE_HOUR);
 		return isSubscribed;
 	} catch (err) {
 		console.warn(`[YOUTUBE] checkSubscription FAILED for ${channelId}:`, err);
@@ -1982,27 +1982,97 @@ export async function getSubscriptionFeed(
 }
 
 /**
+ * Stored format for the curated pool cache.
+ * Includes the playlist IDs used to build the pool so incremental updates
+ * can diff against the current subscription list and only crawl new channels.
+ */
+interface CuratedPoolCache {
+	ids: string[];
+	playlistIds: string[];
+}
+
+/**
+ * Efraimidis-Spirakis weight for a page number.
+ * Pages 2-3: weight 1, pages 4-7: weight 2, pages 8+: weight 3.
+ * Higher weight → more likely to appear early in the shuffled pool.
+ */
+function poolPageWeight(page: number): number {
+	if (page <= 3) return 1;
+	if (page <= 7) return 2;
+	return 3;
+}
+
+/**
+ * Crawl pages 2+ of the given upload playlists and return a weighted-shuffled
+ * array of video IDs. Skips page 1 (those videos are in the subscription feed).
+ * Used for both full pool builds and incremental additions.
+ */
+async function crawlPlaylistsForPool(playlistIds: string[]): Promise<string[]> {
+	if (playlistIds.length === 0) return [];
+
+	// Warm page-1 batches from Redis in a single MGET (free if subfeed was loaded)
+	await publicCache.warmBatchFromRedis(
+		playlistIds.map((pid) => ({ key: `subfeed:batch:${pid}:`, ttlMs: TWO_HOURS }))
+	);
+
+	interface PoolEntry {
+		id: string;
+		page: number;
+	}
+
+	const results = await Promise.all(
+		playlistIds.map(async (pid) => {
+			const entries: PoolEntry[] = [];
+			try {
+				// Fetch page 1 only to get its nextToken — videos from page 1 are skipped.
+				const page1 =
+					publicCache.get<UploadsBatchResult>(`subfeed:batch:${pid}:`) ??
+					(await fetchUploadsBatch(pid));
+				if (!page1.nextToken) return entries; // channel has only 1 page
+
+				let token = page1.nextToken;
+				for (let page = 2; page <= CURATED_MAX_PAGES + 1; page++) {
+					const batch = await fetchUploadsBatch(pid, token);
+					for (const ref of batch.refs) entries.push({ id: ref.id, page });
+					if (!batch.nextToken) break;
+					token = batch.nextToken;
+				}
+			} catch (err) {
+				console.warn(`[YOUTUBE] curatedpool — failed for ${pid}:`, err);
+			}
+			return entries;
+		})
+	);
+
+	const allEntries: PoolEntry[] = [];
+	for (const entries of results) allEntries.push(...entries);
+
+	const weighted = allEntries.map(({ id, page }) => ({
+		id,
+		key: Math.pow(Math.random(), 1 / poolPageWeight(page))
+	}));
+	weighted.sort((a, b) => b.key - a.key);
+	return weighted.map((e) => e.id);
+}
+
+/**
  * Build and cache a shuffled pool of video IDs from the user's subscriptions.
  *
- * Fetches pages 1 and 2 of each subscribed channel's uploads playlist.
- * Page 1 is typically already cached from the subscription feed (free).
- * Page 2 costs one API unit per channel on cold start, then cached for 7 days.
+ * On first build, crawls pages 2+ of every subscribed channel (expensive, ~400
+ * quota units for 50 channels) and caches the result for 30 days.
  *
- * The pool is shuffled with Fisher-Yates once on build. All sessions within
- * the same 7-day window share the same shuffled order but start at different
- * random offsets (chosen per-session in {@link getCuratedFeed}).
+ * On subsequent calls the pool is updated incrementally: only channels that
+ * were added since the last build are crawled. Removed channels' videos stay
+ * in the pool until the next full rebuild (acceptable — they're valid videos).
  */
 async function buildCuratedPool(userId: string, accessToken: string): Promise<string[]> {
 	const cacheKey = `user:curatedpool:${userId}`;
-	const cached = await userCache.getWithRedis<string[]>(cacheKey, ONE_MONTH);
-	if (cached) return cached;
 
-	// Reuse the subscription playlist ID list from the subfeed (cached at 4h)
+	// Resolve current playlist IDs first — needed to diff against the cached pool.
 	const plidsKey = `user:subfeed:plids:${userId}`;
 	let playlistIds = await userCache.getWithRedis<string[]>(plidsKey, FOUR_HOURS);
 
 	if (!playlistIds) {
-		// Fetch subscriptions fresh (same logic as getSubscriptionFeed first page)
 		const allChannelIds: string[] = [];
 		let subPageToken: string | undefined;
 		do {
@@ -2039,63 +2109,44 @@ async function buildCuratedPool(userId: string, accessToken: string): Promise<st
 
 	if (playlistIds.length === 0) return [];
 
-	// Warm page-1 batches from Redis in a single MGET (free if subfeed was loaded)
-	await publicCache.warmBatchFromRedis(
-		playlistIds.map((pid) => ({ key: `subfeed:batch:${pid}:`, ttlMs: TWO_HOURS }))
-	);
+	// Load existing pool. Handle both the current format (CuratedPoolCache) and the
+	// legacy format (plain string[]) written before incremental updates were added.
+	const rawCached = await userCache.getWithRedis<unknown>(cacheKey, ONE_MONTH);
 
-	// Skip page 1 (those videos are in the subscription feed) and crawl all
-	// remaining pages per channel in parallel. Pages 2+ are tracked with their
-	// page number so we can apply a weighted shuffle biased toward older content.
-	interface PoolEntry {
-		id: string;
-		page: number;
+	if (rawCached !== null && rawCached !== undefined) {
+		const isNewFormat =
+			typeof rawCached === 'object' &&
+			!Array.isArray(rawCached) &&
+			'ids' in (rawCached as object) &&
+			'playlistIds' in (rawCached as object);
+
+		if (!isNewFormat) {
+			// Legacy plain string[] — rebuild so we start tracking playlistIds.
+			const ids = await crawlPlaylistsForPool(playlistIds);
+			userCache.set(cacheKey, { ids, playlistIds } satisfies CuratedPoolCache, ONE_MONTH);
+			return ids;
+		}
+
+		const existing = rawCached as CuratedPoolCache;
+		const existingSet = new Set(existing.playlistIds);
+		const added = playlistIds.filter((pid) => !existingSet.has(pid));
+
+		if (added.length === 0) {
+			return existing.ids; // No subscription changes — serve as-is.
+		}
+
+		// Only crawl newly subscribed channels.
+		console.log(`[YOUTUBE] curatedpool — incrementally adding ${added.length} new channel(s)`);
+		const newIds = await crawlPlaylistsForPool(added);
+		const merged = [...newIds, ...existing.ids];
+		userCache.set(cacheKey, { ids: merged, playlistIds } satisfies CuratedPoolCache, ONE_MONTH);
+		return merged;
 	}
 
-	const results = await Promise.all(
-		playlistIds.map(async (pid) => {
-			const entries: PoolEntry[] = [];
-			try {
-				// Fetch page 1 only to get its nextToken — videos from page 1 are skipped.
-				const page1 =
-					publicCache.get<UploadsBatchResult>(`subfeed:batch:${pid}:`) ??
-					(await fetchUploadsBatch(pid));
-				if (!page1.nextToken) return entries; // channel has only 1 page
-
-				let token = page1.nextToken;
-				for (let page = 2; page <= CURATED_MAX_PAGES + 1; page++) {
-					const batch = await fetchUploadsBatch(pid, token);
-					for (const ref of batch.refs) entries.push({ id: ref.id, page });
-					if (!batch.nextToken) break;
-					token = batch.nextToken;
-				}
-			} catch (err) {
-				console.warn(`[YOUTUBE] curatedpool — failed for ${pid}:`, err);
-			}
-			return entries;
-		})
-	);
-
-	const allEntries: PoolEntry[] = [];
-	for (const entries of results) allEntries.push(...entries);
-
-	// Efraimidis-Spirakis weighted shuffle: pages 2-3 weight 1, pages 4-7 weight 2,
-	// pages 8+ weight 3 — biased toward middle and older videos while still allowing
-	// newer ones to appear.
-	function pageWeight(page: number): number {
-		if (page <= 3) return 1;
-		if (page <= 7) return 2;
-		return 3;
-	}
-	const weighted = allEntries.map(({ id, page }) => ({
-		id,
-		key: Math.pow(Math.random(), 1 / pageWeight(page))
-	}));
-	weighted.sort((a, b) => b.key - a.key);
-	const allIds = weighted.map((e) => e.id);
-
-	userCache.set(cacheKey, allIds, ONE_MONTH);
-	return allIds;
+	// No pool cached — full build.
+	const ids = await crawlPlaylistsForPool(playlistIds);
+	userCache.set(cacheKey, { ids, playlistIds } satisfies CuratedPoolCache, ONE_MONTH);
+	return ids;
 }
 
 /**
