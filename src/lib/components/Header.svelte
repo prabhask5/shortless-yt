@@ -100,7 +100,7 @@
 			<SearchBar initialQuery={query ?? ''} />
 		</div>
 
-		<!-- Right side actions: search (mobile), dark mode, refresh (mobile), user menu -->
+		<!-- Right side actions: search (mobile), subscriptions, dark mode, refresh (mobile), user menu -->
 		<div class="ml-auto flex items-center gap-1">
 			<!-- Mobile search toggle: only visible on screens smaller than md breakpoint -->
 			<button
@@ -114,6 +114,25 @@
 					/>
 				</svg>
 			</button>
+
+			<!-- Subscriptions icon: visible on all screen sizes when signed in -->
+			{#if user}
+				<a
+					href="/subscriptions"
+					class="text-yt-text-secondary hover:text-yt-text p-2 transition-colors"
+					aria-label="Subscriptions"
+				>
+					<svg class="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
+						<!-- Three channel avatar circles -->
+						<circle cx="4.5" cy="7" r="2.5" />
+						<circle cx="12" cy="7" r="2.5" />
+						<circle cx="19.5" cy="7" r="2.5" />
+						<!-- Feed lines representing video items -->
+						<rect x="2" y="13" width="20" height="2" rx="1" />
+						<rect x="2" y="18" width="20" height="2" rx="1" />
+					</svg>
+				</a>
+			{/if}
 
 			<DarkModeToggle />
 
