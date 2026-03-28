@@ -2,7 +2,7 @@
 	<title>Privacy Policy - Shortless</title>
 </svelte:head>
 
-<div class="mx-auto max-w-screen-md px-4 py-8">
+<div class="mx-auto max-w-screen-2xl px-4 py-8">
 	<h1 class="mb-4 text-2xl font-bold">Privacy Policy</h1>
 	<p class="text-yt-text-secondary mb-2 text-sm">Last updated: March 2026</p>
 

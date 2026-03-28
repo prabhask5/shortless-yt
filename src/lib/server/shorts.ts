@@ -67,7 +67,7 @@ const SHORTS_REDIS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Redis key prefix for shorts detection. Bumped to v2 to invalidate
  * poisoned entries from the old code that cached 429 responses as non-Shorts. */
-const SHORTS_KEY_PREFIX = 'short2:';
+const SHORTS_KEY_PREFIX = 'short:';
 
 /**
  * In-memory L1 cache for shorts detection results (videoId -> isShort).

@@ -59,7 +59,7 @@
 	<title>{data.playlist.title} - Shortless</title>
 </svelte:head>
 
-<div class="mx-auto max-w-screen-xl px-4 py-4">
+<div class="mx-auto max-w-screen-2xl px-4 py-4">
 	<div class="mb-6">
 		<div class="flex items-start gap-4">
 			<img

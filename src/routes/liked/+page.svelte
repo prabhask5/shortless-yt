@@ -69,7 +69,7 @@
 	<title>Liked Videos - Shortless</title>
 </svelte:head>
 
-<div class="mx-auto max-w-screen-xl px-4 py-4">
+<div class="mx-auto max-w-screen-2xl px-4 py-4">
 	<h1 class="mb-4 text-xl font-bold">Liked Videos</h1>
 
 	{#await data.streamed.likedData}

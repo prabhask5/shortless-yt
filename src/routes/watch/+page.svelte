@@ -109,7 +109,7 @@
 	<meta name="description" content={data.video.title} />
 </svelte:head>
 
-<div class="mx-auto px-4 py-4 {theaterMode ? 'max-w-full' : 'max-w-screen-xl'}">
+<div class="mx-auto px-4 py-4 {theaterMode ? 'max-w-full' : 'max-w-screen-2xl'}">
 	<div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
 		<div class={theaterMode ? 'lg:col-span-3' : 'lg:col-span-2'}>
 			<!-- Video player renders immediately (blocking data) — keyed to force
