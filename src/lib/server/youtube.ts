@@ -1604,10 +1604,10 @@ export async function getUserPlaylists(
 }
 
 /**
- * System playlist IDs returned by the YouTube API's `playlists.list?mine=true`.
- * These are auto-created and cannot be viewed or managed like user playlists.
+ * System playlist IDs to hide from the "My Playlists" page.
+ * LL = Liked Videos, WL = Watch Later (both have dedicated pages in the app).
  */
-const SYSTEM_PLAYLIST_IDS = new Set(['LL', 'WL', 'FL', 'HL']);
+const SYSTEM_PLAYLIST_IDS = new Set(['LL', 'WL']);
 
 /**
  * Fetch all user-created playlists (all pages), filtering out YouTube's system
@@ -1630,7 +1630,7 @@ export async function getMyPlaylists(accessToken: string, userId: string): Promi
 	do {
 		const page = await getUserPlaylists(accessToken, userId, pageToken);
 		for (const pl of page.items) {
-			if (!SYSTEM_PLAYLIST_IDS.has(pl.id) && pl.id.startsWith('PL')) {
+			if (!SYSTEM_PLAYLIST_IDS.has(pl.id)) {
 				playlists.push(pl);
 			}
 		}

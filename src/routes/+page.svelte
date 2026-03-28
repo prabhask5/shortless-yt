@@ -130,7 +130,7 @@
 </script>
 
 <svelte:head>
-	<title>Shortless</title>
+	<title>{data.authenticated ? 'My Curated Feed - Shortless' : 'Shortless'}</title>
 	<meta name="description" content="Watch videos without Shorts" />
 </svelte:head>
 
