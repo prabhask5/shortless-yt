@@ -30,7 +30,7 @@
  * - `userCache`  — for per-session authenticated data (subscriptions, liked videos)
  */
 
-import { redisGet, redisSet } from './redis.js';
+import { redisGet, redisSet, redisMGet } from './redis.js';
 
 /** Internal representation of an L1 cache entry with freshness and hard-expiry timestamps. */
 interface CacheEntry<T> {
@@ -114,6 +114,56 @@ class TTLCache {
 		entry.expiresAt = now + ttlMs * 3;
 		/* Refresh Redis TTL too */
 		redisSet(this.prefix + key, entry.data, ttlMs * 2);
+	}
+
+	/**
+	 * Batch-fetch a set of keys from Redis in a single MGET round trip, promoting
+	 * all hits into L1. Keys already in L1 are included in the result without any
+	 * Redis traffic. Returns a Map of key → value for every entry found in either
+	 * L1 or L2; absent keys are simply omitted.
+	 *
+	 * Use this instead of N individual `getWithRedis` calls when fetching multiple
+	 * related keys (e.g. per-video or per-channel detail caches).
+	 *
+	 * @param entries - Array of { key, ttlMs } pairs to look up.
+	 * @returns Map of key → value for all found entries.
+	 */
+	async warmBatchFromRedis<T = unknown>(
+		entries: Array<{ key: string; ttlMs: number }>
+	): Promise<Map<string, T>> {
+		const result = new Map<string, T>();
+
+		const missing: Array<{ key: string; ttlMs: number }> = [];
+		for (const entry of entries) {
+			const l1 = this.get<T>(entry.key);
+			if (l1 !== undefined) {
+				result.set(entry.key, l1);
+			} else {
+				missing.push(entry);
+			}
+		}
+
+		if (missing.length === 0) return result;
+
+		const redisKeys = missing.map(({ key }) => this.prefix + key);
+		const l2 = await redisMGet<T>(redisKeys);
+		if (l2.size === 0) return result;
+
+		const now = Date.now();
+		for (let i = 0; i < missing.length; i++) {
+			const { key, ttlMs } = missing[i];
+			const val = l2.get(redisKeys[i]);
+			if (val !== undefined) {
+				this.store.set(key, {
+					data: val,
+					freshUntil: now + ttlMs,
+					expiresAt: now + ttlMs * 3
+				});
+				result.set(key, val);
+			}
+		}
+
+		return result;
 	}
 
 	/**

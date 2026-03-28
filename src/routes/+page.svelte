@@ -76,9 +76,9 @@
 		}
 	}
 
-	/* ── Auth feed: infinite scroll via k-way merge cursor ── */
+	/* ── Auth feed: infinite scroll via curated feed cursor ── */
 	let authFeed = $state<VideoItem[]>([]);
-	let subFeedCursor = $state<unknown>(undefined);
+	let curatedCursor = $state<unknown>(undefined);
 	let authFeedLoading = $state(false);
 	let authInitialLoading = $state(true);
 
@@ -91,20 +91,20 @@
 			data.streamed.authData.then((authData) => {
 				if (gen !== authGeneration) return;
 				authFeed = authData.feed ?? [];
-				subFeedCursor = authData.cursor;
+				curatedCursor = authData.cursor;
 				authInitialLoading = false;
 			});
 		}
 	});
 
 	async function loadMoreAuthFeed() {
-		if (!subFeedCursor || authFeedLoading) return;
+		if (!curatedCursor || authFeedLoading) return;
 		authFeedLoading = true;
 		try {
-			let cursor: unknown = subFeedCursor;
+			let cursor: unknown = curatedCursor;
 			for (let page = 0; page < MAX_CLIENT_PAGES && cursor; page++) {
 				const res: Response = await fetch(
-					`/api/videos?source=subfeed&cursor=${encodeURIComponent(JSON.stringify(cursor))}`
+					`/api/videos?source=curated&cursor=${encodeURIComponent(JSON.stringify(cursor))}`
 				);
 				if (!res.ok) break;
 				const json: { items: VideoItem[]; cursor?: unknown } = await res.json();
@@ -114,7 +114,7 @@
 				cursor = json.cursor;
 				if (json.items.length > 0) break;
 			}
-			subFeedCursor = cursor;
+			curatedCursor = cursor;
 		} finally {
 			authFeedLoading = false;
 		}
@@ -179,7 +179,7 @@
 						items={authFeed}
 						columns={cols.value}
 						gap={16}
-						hasMore={!!subFeedCursor}
+						hasMore={!!curatedCursor}
 						loadingMore={authFeedLoading}
 						onLoadMore={loadMoreAuthFeed}
 					>
@@ -187,7 +187,7 @@
 							<VideoCard {video} />
 						{/snippet}
 					</VirtualFeed>
-				{:else if !subFeedCursor}
+				{:else if !curatedCursor}
 					<p class="text-yt-text-secondary py-8 text-center">
 						No recent videos from your subscriptions.
 					</p>

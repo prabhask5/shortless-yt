@@ -57,6 +57,7 @@ const ONE_HOUR = 60 * 60 * 1000;
 const TWO_HOURS = 2 * 60 * 60 * 1000;
 const FOUR_HOURS = 4 * 60 * 60 * 1000;
 const ONE_DAY = 24 * 60 * 60 * 1000;
+const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
 
 // ===================================================================
 // Request coalescing (singleflight)
@@ -462,7 +463,7 @@ export async function searchVideos(
 	options?: { pageToken?: string; videoDuration?: string; order?: string; channelId?: string }
 ): Promise<PaginatedResult<VideoItem>> {
 	const cacheKey = `search:v:${encodeURIComponent(query)}:${options?.pageToken ?? ''}:${options?.videoDuration ?? ''}:${options?.order ?? ''}:${options?.channelId ?? ''}`;
-	const cached = await publicCache.getWithRedis<PaginatedResult<VideoItem>>(cacheKey, TWO_HOURS);
+	const cached = await publicCache.getWithRedis<PaginatedResult<VideoItem>>(cacheKey, ONE_DAY);
 	if (cached) return cached;
 
 	return singleflight(cacheKey, async () => {
@@ -494,7 +495,7 @@ export async function searchVideos(
 			}
 		};
 
-		publicCache.set(cacheKey, result, TWO_HOURS);
+		publicCache.set(cacheKey, result, ONE_DAY);
 		return result;
 	});
 }
@@ -514,7 +515,7 @@ export async function searchChannels(
 	pageToken?: string
 ): Promise<PaginatedResult<ChannelItem>> {
 	const cacheKey = `search:c:${encodeURIComponent(query)}:${pageToken ?? ''}`;
-	const cached = await publicCache.getWithRedis<PaginatedResult<ChannelItem>>(cacheKey, TWO_HOURS);
+	const cached = await publicCache.getWithRedis<PaginatedResult<ChannelItem>>(cacheKey, ONE_DAY);
 	if (cached) return cached;
 
 	const params: Record<string, string> = {
@@ -542,7 +543,7 @@ export async function searchChannels(
 		}
 	};
 
-	publicCache.set(cacheKey, result, TWO_HOURS);
+	publicCache.set(cacheKey, result, ONE_DAY);
 	return result;
 }
 
@@ -561,7 +562,7 @@ export async function searchPlaylists(
 	pageToken?: string
 ): Promise<PaginatedResult<PlaylistItem>> {
 	const cacheKey = `search:p:${encodeURIComponent(query)}:${pageToken ?? ''}`;
-	const cached = await publicCache.getWithRedis<PaginatedResult<PlaylistItem>>(cacheKey, TWO_HOURS);
+	const cached = await publicCache.getWithRedis<PaginatedResult<PlaylistItem>>(cacheKey, ONE_DAY);
 	if (cached) return cached;
 
 	const params: Record<string, string> = {
@@ -602,7 +603,7 @@ export async function searchPlaylists(
 		}
 	};
 
-	publicCache.set(cacheKey, result, TWO_HOURS);
+	publicCache.set(cacheKey, result, ONE_DAY);
 	return result;
 }
 
@@ -644,7 +645,7 @@ export async function searchMixed(
 		>;
 		nextPageToken?: string;
 	};
-	const cached = await publicCache.getWithRedis<MixedResult>(cacheKey, TWO_HOURS);
+	const cached = await publicCache.getWithRedis<MixedResult>(cacheKey, ONE_DAY);
 	if (cached) return cached;
 
 	const params: Record<string, string> = {
@@ -717,7 +718,7 @@ export async function searchMixed(
 	}
 
 	const result = { results, nextPageToken: nextToken };
-	publicCache.set(cacheKey, result, TWO_HOURS);
+	publicCache.set(cacheKey, result, ONE_DAY);
 	return result;
 }
 
@@ -750,28 +751,20 @@ export async function getVideoDetails(ids: string[]): Promise<VideoItem[]> {
 		}
 	}
 
-	/* L2: check Redis for L1 misses */
+	/* L2: batch-fetch all L1 misses from Redis in a single MGET */
 	if (uncachedIds.length > 0) {
+		const l2hits = await publicCache.warmBatchFromRedis<VideoItem>(
+			uncachedIds.map((id) => ({ key: `video:${id}`, ttlMs: ONE_DAY }))
+		);
+
 		const stillMissing: string[] = [];
-		try {
-			const redisHits = await Promise.all(
-				uncachedIds.map((id) =>
-					publicCache
-						.getWithRedis<VideoItem>(`video:${id}`, ONE_DAY)
-						.then((v) => ({ id, value: v }))
-						.catch(() => ({ id, value: undefined }))
-				)
-			);
-			for (const hit of redisHits) {
-				if (hit.value) {
-					results.push(hit.value);
-				} else {
-					stillMissing.push(hit.id);
-				}
+		for (const id of uncachedIds) {
+			const hit = l2hits.get(`video:${id}`);
+			if (hit !== undefined) {
+				results.push(hit);
+			} else {
+				stillMissing.push(id);
 			}
-		} catch {
-			/* Redis entirely unavailable — fall through to API for all uncached IDs */
-			stillMissing.push(...uncachedIds);
 		}
 
 		/* L3: Batch-fetch remaining IDs from YouTube API in groups of 50. */
@@ -821,27 +814,20 @@ export async function getChannelDetails(ids: string[]): Promise<ChannelItem[]> {
 		}
 	}
 
-	/* L2: check Redis for L1 misses */
+	/* L2: batch-fetch all L1 misses from Redis in a single MGET */
 	if (uncachedIds.length > 0) {
+		const l2hits = await publicCache.warmBatchFromRedis<ChannelItem>(
+			uncachedIds.map((id) => ({ key: `channel:${id}`, ttlMs: ONE_DAY }))
+		);
+
 		const stillMissing: string[] = [];
-		try {
-			const redisHits = await Promise.all(
-				uncachedIds.map((id) =>
-					publicCache
-						.getWithRedis<ChannelItem>(`channel:${id}`, ONE_DAY)
-						.then((v) => ({ id, value: v }))
-						.catch(() => ({ id, value: undefined }))
-				)
-			);
-			for (const hit of redisHits) {
-				if (hit.value) {
-					results.push(hit.value);
-				} else {
-					stillMissing.push(hit.id);
-				}
+		for (const id of uncachedIds) {
+			const hit = l2hits.get(`channel:${id}`);
+			if (hit !== undefined) {
+				results.push(hit);
+			} else {
+				stillMissing.push(id);
 			}
-		} catch {
-			stillMissing.push(...uncachedIds);
 		}
 
 		/* L3: Batch-fetch remaining from YouTube API */
@@ -889,27 +875,20 @@ export async function getPlaylistDetails(ids: string[]): Promise<PlaylistItem[]>
 		}
 	}
 
-	/* L2: check Redis for L1 misses */
+	/* L2: batch-fetch all L1 misses from Redis in a single MGET */
 	if (uncachedIds.length > 0) {
+		const l2hits = await publicCache.warmBatchFromRedis<PlaylistItem>(
+			uncachedIds.map((id) => ({ key: `playlist:${id}`, ttlMs: ONE_DAY }))
+		);
+
 		const stillMissing: string[] = [];
-		try {
-			const redisHits = await Promise.all(
-				uncachedIds.map((id) =>
-					publicCache
-						.getWithRedis<PlaylistItem>(`playlist:${id}`, ONE_DAY)
-						.then((v) => ({ id, value: v }))
-						.catch(() => ({ id, value: undefined }))
-				)
-			);
-			for (const hit of redisHits) {
-				if (hit.value) {
-					results.push(hit.value);
-				} else {
-					stillMissing.push(hit.id);
-				}
+		for (const id of uncachedIds) {
+			const hit = l2hits.get(`playlist:${id}`);
+			if (hit !== undefined) {
+				results.push(hit);
+			} else {
+				stillMissing.push(id);
 			}
-		} catch {
-			stillMissing.push(...uncachedIds);
 		}
 
 		/* L3: Batch-fetch remaining from YouTube API */
@@ -1597,7 +1576,7 @@ export async function getUserPlaylists(
 	pageToken?: string
 ): Promise<PaginatedResult<PlaylistItem>> {
 	const cacheKey = `user:playlists:${userId}:${pageToken ?? ''}`;
-	const cached = await userCache.getWithRedis<PaginatedResult<PlaylistItem>>(cacheKey, ONE_HOUR);
+	const cached = await userCache.getWithRedis<PaginatedResult<PlaylistItem>>(cacheKey, ONE_DAY);
 	if (cached) return cached;
 
 	const params: Record<string, string> = {
@@ -1620,8 +1599,48 @@ export async function getUserPlaylists(
 		}
 	};
 
-	userCache.set(cacheKey, result, ONE_HOUR);
+	userCache.set(cacheKey, result, ONE_DAY);
 	return result;
+}
+
+/**
+ * System playlist IDs returned by the YouTube API's `playlists.list?mine=true`.
+ * These are auto-created and cannot be viewed or managed like user playlists.
+ */
+const SYSTEM_PLAYLIST_IDS = new Set(['LL', 'WL', 'FL', 'HL']);
+
+/**
+ * Fetch all user-created playlists (all pages), filtering out YouTube's system
+ * playlists (Liked Videos `LL`, Watch Later `WL`, Favorites `FL`, History `HL`).
+ *
+ * Caches the complete flat list at ONE_DAY since playlists rarely change.
+ *
+ * @param accessToken - The user's OAuth2 access token.
+ * @param userId      - The user's stable channel ID (used for cache scoping).
+ * @returns Flat array of user-created playlists, sorted by title.
+ */
+export async function getMyPlaylists(accessToken: string, userId: string): Promise<PlaylistItem[]> {
+	const cacheKey = `user:myplaylists:${userId}`;
+	const cached = await userCache.getWithRedis<PlaylistItem[]>(cacheKey, ONE_DAY);
+	if (cached) return cached;
+
+	const playlists: PlaylistItem[] = [];
+	let pageToken: string | undefined;
+
+	do {
+		const page = await getUserPlaylists(accessToken, userId, pageToken);
+		for (const pl of page.items) {
+			if (!SYSTEM_PLAYLIST_IDS.has(pl.id) && pl.id.startsWith('PL')) {
+				playlists.push(pl);
+			}
+		}
+		pageToken = page.pageInfo.nextPageToken;
+	} while (pageToken);
+
+	playlists.sort((a, b) => a.title.localeCompare(b.title));
+
+	userCache.set(cacheKey, playlists, ONE_DAY);
+	return playlists;
 }
 
 /**
@@ -1639,6 +1658,21 @@ export async function getUserPlaylists(
  * @param accessToken - The user's OAuth2 access token.
  * @returns Array of recent videos from subscriptions, sorted newest first.
  */
+/** Cursor for curated feed pagination: tracks the random start offset and how many items consumed. */
+export interface CuratedFeedCursor {
+	/** Index in the shuffled pool where this session started. */
+	startOffset: number;
+	/** Total number of items consumed so far from this session. */
+	consumed: number;
+}
+
+/** Result shape for the curated feed. */
+export interface CuratedFeedResult {
+	items: VideoItem[];
+	/** Cursor for the next page. Undefined when pool is exhausted. */
+	cursor?: CuratedFeedCursor;
+}
+
 // ===================================================================
 // Subscription feed — k-way merge of channel upload timelines
 // ===================================================================
@@ -1647,6 +1681,14 @@ export async function getUserPlaylists(
 const SUBFEED_BATCH_SIZE = 10;
 /** How many videos to return per page of the subscription feed. */
 const SUBFEED_PAGE_SIZE = 20;
+/**
+ * Maximum upload-playlist pages to crawl per channel when building the curated pool.
+ * Page 1 is skipped (those videos are in the subscription feed), so this controls
+ * how many pages beyond page 1 are fetched. 50 pages × 10 videos = up to 500 videos
+ * per channel. Most channels exhaust naturally before this cap. Costs up to 50 API
+ * units per channel on first build (once per week), then free from the pool cache.
+ */
+const CURATED_MAX_PAGES = 50;
 
 /** Per-channel cursor state for subscription feed pagination. */
 export interface SubFeedChannelCursor {
@@ -1826,6 +1868,11 @@ export async function getSubscriptionFeed(
 			userCache.set(cacheKey, playlistIds, FOUR_HOURS);
 		}
 
+		// Pre-warm L1 from Redis in one MGET instead of N individual GETs
+		await publicCache.warmBatchFromRedis(
+			playlistIds.map((pid) => ({ key: `subfeed:batch:${pid}:`, ttlMs: TWO_HOURS }))
+		);
+
 		// Fetch first batch from all channels in parallel
 		const results = await Promise.all(
 			playlistIds.map(async (pid) => {
@@ -1846,6 +1893,14 @@ export async function getSubscriptionFeed(
 		);
 		buffers = results.filter((r): r is ChannelBuffer => r !== null);
 	} else {
+		// Pre-warm L1 from Redis in one MGET instead of N individual GETs
+		await publicCache.warmBatchFromRedis(
+			cursor.map((ch) => ({
+				key: `subfeed:batch:${ch.playlistId}:${ch.fetchToken ?? ''}`,
+				ttlMs: TWO_HOURS
+			}))
+		);
+
 		// Resume from cursor: re-fetch each channel's current page (cached)
 		const results = await Promise.all(
 			cursor.map(async (ch) => {
@@ -1924,6 +1979,172 @@ export async function getSubscriptionFeed(
 			: undefined;
 
 	return { items: orderedVideos, cursor: newCursor };
+}
+
+/**
+ * Build and cache a shuffled pool of video IDs from the user's subscriptions.
+ *
+ * Fetches pages 1 and 2 of each subscribed channel's uploads playlist.
+ * Page 1 is typically already cached from the subscription feed (free).
+ * Page 2 costs one API unit per channel on cold start, then cached for 7 days.
+ *
+ * The pool is shuffled with Fisher-Yates once on build. All sessions within
+ * the same 7-day window share the same shuffled order but start at different
+ * random offsets (chosen per-session in {@link getCuratedFeed}).
+ */
+async function buildCuratedPool(userId: string, accessToken: string): Promise<string[]> {
+	const cacheKey = `user:curatedpool:${userId}`;
+	const cached = await userCache.getWithRedis<string[]>(cacheKey, SEVEN_DAYS);
+	if (cached) return cached;
+
+	// Reuse the subscription playlist ID list from the subfeed (cached at 4h)
+	const plidsKey = `user:subfeed:plids:${userId}`;
+	let playlistIds = await userCache.getWithRedis<string[]>(plidsKey, FOUR_HOURS);
+
+	if (!playlistIds) {
+		// Fetch subscriptions fresh (same logic as getSubscriptionFeed first page)
+		const allChannelIds: string[] = [];
+		let subPageToken: string | undefined;
+		do {
+			const subsPage = await getSubscriptions(accessToken, userId, subPageToken);
+			for (const ch of subsPage.items) {
+				if (ch.id) allChannelIds.push(ch.id);
+			}
+			subPageToken = subsPage.pageInfo.nextPageToken;
+		} while (subPageToken);
+
+		if (allChannelIds.length === 0) return [];
+
+		playlistIds = [];
+		for (let i = 0; i < allChannelIds.length; i += 50) {
+			const batch = allChannelIds.slice(i, i + 50);
+			const channelData = (await youtubeApiFetch('channels', {
+				part: 'contentDetails',
+				id: batch.join(','),
+				maxResults: '50'
+			})) as Record<string, unknown>;
+			const channelItems = (channelData.items as Record<string, unknown>[]) ?? [];
+			for (const ch of channelItems) {
+				const cd = ch.contentDetails as Record<string, unknown> | undefined;
+				const rp = cd?.relatedPlaylists as Record<string, string> | undefined;
+				const chId = (ch.id as string) ?? '';
+				if (rp?.uploads) {
+					playlistIds.push(rp.uploads);
+					if (chId) publicCache.set(`ch:uploads:${chId}`, rp.uploads, ONE_DAY);
+				}
+			}
+		}
+		userCache.set(plidsKey, playlistIds, FOUR_HOURS);
+	}
+
+	if (playlistIds.length === 0) return [];
+
+	// Warm page-1 batches from Redis in a single MGET (free if subfeed was loaded)
+	await publicCache.warmBatchFromRedis(
+		playlistIds.map((pid) => ({ key: `subfeed:batch:${pid}:`, ttlMs: TWO_HOURS }))
+	);
+
+	// Skip page 1 (those videos are in the subscription feed) and crawl all
+	// remaining pages per channel in parallel. Pages 2+ are tracked with their
+	// page number so we can apply a weighted shuffle biased toward older content.
+	interface PoolEntry {
+		id: string;
+		page: number;
+	}
+
+	const results = await Promise.all(
+		playlistIds.map(async (pid) => {
+			const entries: PoolEntry[] = [];
+			try {
+				// Fetch page 1 only to get its nextToken — videos from page 1 are skipped.
+				const page1 =
+					publicCache.get<UploadsBatchResult>(`subfeed:batch:${pid}:`) ??
+					(await fetchUploadsBatch(pid));
+				if (!page1.nextToken) return entries; // channel has only 1 page
+
+				let token = page1.nextToken;
+				for (let page = 2; page <= CURATED_MAX_PAGES + 1; page++) {
+					const batch = await fetchUploadsBatch(pid, token);
+					for (const ref of batch.refs) entries.push({ id: ref.id, page });
+					if (!batch.nextToken) break;
+					token = batch.nextToken;
+				}
+			} catch (err) {
+				console.warn(`[YOUTUBE] curatedpool — failed for ${pid}:`, err);
+			}
+			return entries;
+		})
+	);
+
+	const allEntries: PoolEntry[] = [];
+	for (const entries of results) allEntries.push(...entries);
+
+	// Efraimidis-Spirakis weighted shuffle: pages 2-3 weight 1, pages 4-7 weight 2,
+	// pages 8+ weight 3 — biased toward middle and older videos while still allowing
+	// newer ones to appear.
+	function pageWeight(page: number): number {
+		if (page <= 3) return 1;
+		if (page <= 7) return 2;
+		return 3;
+	}
+	const weighted = allEntries.map(({ id, page }) => ({
+		id,
+		key: Math.pow(Math.random(), 1 / pageWeight(page))
+	}));
+	weighted.sort((a, b) => b.key - a.key);
+	const allIds = weighted.map((e) => e.id);
+
+	userCache.set(cacheKey, allIds, SEVEN_DAYS);
+	return allIds;
+}
+
+/**
+ * Serve a page of videos from the curated pool.
+ *
+ * The pool is a shuffled list of video IDs. Each session starts at a random
+ * offset (chosen on the first call, when `cursor` is undefined), then advances
+ * linearly for infinite scroll — guaranteeing no repeats within a session while
+ * delivering a different first page on every reload.
+ *
+ * @param accessToken - The user's OAuth2 access token.
+ * @param userId      - The user's stable channel ID for cache scoping.
+ * @param count       - Videos to return per page (default 20).
+ * @param cursor      - Omit on first call; pass returned cursor for subsequent pages.
+ */
+export async function getCuratedFeed(
+	accessToken: string,
+	userId: string,
+	count: number = 20,
+	cursor?: CuratedFeedCursor
+): Promise<CuratedFeedResult> {
+	const pool = await buildCuratedPool(userId, accessToken);
+	if (pool.length === 0) return { items: [] };
+
+	const startOffset = cursor ? cursor.startOffset : Math.floor(Math.random() * pool.length);
+	const consumed = cursor ? cursor.consumed : 0;
+	const remaining = pool.length - consumed;
+
+	if (remaining <= 0) return { items: [] };
+
+	const toFetch = Math.min(count, remaining);
+	const selectedIds: string[] = [];
+	for (let i = 0; i < toFetch; i++) {
+		selectedIds.push(pool[(startOffset + consumed + i) % pool.length]);
+	}
+
+	const videos = await getVideoDetails(selectedIds);
+
+	// Preserve pool order
+	const videoMap = new Map(videos.map((v) => [v.id, v]));
+	const ordered = selectedIds
+		.map((id) => videoMap.get(id))
+		.filter((v): v is VideoItem => v !== undefined);
+
+	const newConsumed = consumed + toFetch;
+	const nextCursor: CuratedFeedCursor | undefined =
+		newConsumed < pool.length ? { startOffset, consumed: newConsumed } : undefined;
+
+	return { items: ordered, cursor: nextCursor };
 }
 
 /**

@@ -173,10 +173,22 @@
 								<p class="text-yt-text text-sm font-medium">{user.channelTitle}</p>
 							</div>
 							<a
+								href="/subscriptions"
+								class="text-yt-text hover:bg-yt-surface-hover block px-4 py-2 text-sm"
+							>
+								Subscriptions
+							</a>
+							<a
 								href="/liked"
 								class="text-yt-text hover:bg-yt-surface-hover block px-4 py-2 text-sm"
 							>
 								Liked videos
+							</a>
+							<a
+								href="/playlists"
+								class="text-yt-text hover:bg-yt-surface-hover block px-4 py-2 text-sm"
+							>
+								My playlists
 							</a>
 							<form method="POST" action="/api/auth/logout">
 								<button

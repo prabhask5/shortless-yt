@@ -23,9 +23,10 @@ import {
 	getLikedVideos,
 	getPlaylistVideos,
 	searchMixed,
-	getSubscriptionFeed
+	getSubscriptionFeed,
+	getCuratedFeed
 } from '$lib/server/youtube';
-import type { SubFeedCursor } from '$lib/server/youtube';
+import type { SubFeedCursor, CuratedFeedCursor } from '$lib/server/youtube';
 import { filterOutShorts, filterOutBrokenVideos } from '$lib/server/shorts';
 import type { VideoItem } from '$lib/types';
 
@@ -42,6 +43,17 @@ function isValidSubFeedCursor(value: unknown): value is SubFeedCursor {
 		if (typeof (item as Record<string, unknown>).offset !== 'number') return false;
 	}
 	return true;
+}
+
+function isValidCuratedCursor(value: unknown): value is CuratedFeedCursor {
+	if (typeof value !== 'object' || value === null) return false;
+	const v = value as Record<string, unknown>;
+	return (
+		typeof v.startOffset === 'number' &&
+		typeof v.consumed === 'number' &&
+		v.startOffset >= 0 &&
+		v.consumed >= 0
+	);
 }
 
 export const GET: RequestHandler = async ({ url, locals }) => {
@@ -155,7 +167,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			if (!cursorRaw) {
 				throw error(400, 'Missing cursor parameter');
 			}
-			if (cursorRaw.length > 5000) throw error(400, 'cursor too long');
+			if (cursorRaw.length > 100_000) throw error(400, 'cursor too long');
 
 			let feedCursor: SubFeedCursor;
 			try {
@@ -172,6 +184,37 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			const result = await getSubscriptionFeed(
 				locals.session.accessToken,
 				locals.session.channelId,
+				feedCursor
+			);
+			const clean = filterOutBrokenVideos(result.items);
+			const filtered = await filterOutShorts(clean);
+			return json(
+				{ items: filtered, cursor: result.cursor },
+				{ headers: { 'Cache-Control': 'private, max-age=60' } }
+			);
+		}
+
+		if (source === 'curated') {
+			if (!locals.session) {
+				throw error(401, 'Authentication required');
+			}
+			let feedCursor: CuratedFeedCursor | undefined;
+			const cursorRaw = url.searchParams.get('cursor');
+			if (cursorRaw) {
+				if (cursorRaw.length > 500) throw error(400, 'cursor too long');
+				try {
+					const parsed = JSON.parse(cursorRaw);
+					if (!isValidCuratedCursor(parsed)) throw error(400, 'Invalid cursor shape');
+					feedCursor = parsed;
+				} catch (e) {
+					if (e && typeof e === 'object' && 'status' in e) throw e;
+					throw error(400, 'Invalid cursor JSON');
+				}
+			}
+			const result = await getCuratedFeed(
+				locals.session.accessToken,
+				locals.session.channelId,
+				20,
 				feedCursor
 			);
 			const clean = filterOutBrokenVideos(result.items);

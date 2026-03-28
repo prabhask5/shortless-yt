@@ -1,57 +1,52 @@
 /**
- * @fileoverview Home page server load — dual strategy for authenticated vs anonymous users.
+ * @fileoverview Home page server load — curated feed for authenticated users, trending for anon.
  *
- * Authenticated users see their subscription channels (horizontal bar) plus
- * recent videos from subscribed channels. Anonymous users see category chips
- * plus trending videos.
+ * Authenticated users see a randomly-ordered curated feed drawn from their subscription
+ * pool (pages 1 & 2 of each subscribed channel's uploads, shuffled, cached 7 days).
+ * Each page load starts at a different random offset in the pool for variety.
+ *
+ * Anonymous users see category chips plus trending videos.
  *
  * Uses SvelteKit streaming: returns promises so the page renders immediately
  * with skeleton placeholders, then fills in when data arrives.
  */
 import type { PageServerLoad } from './$types';
-import type { PaginatedResult, VideoItem, ChannelItem } from '$lib/types';
+import type { VideoItem } from '$lib/types';
 import {
 	getTrending,
 	getVideoCategories,
 	getSubscriptions,
-	getSubscriptionFeed
+	getCuratedFeed
 } from '$lib/server/youtube';
-import type { SubFeedCursor } from '$lib/server/youtube';
 import { filterOutShorts, filterOutBrokenVideos } from '$lib/server/shorts';
 
 /** Minimum filtered videos to collect before showing the initial page. */
 const TARGET_INITIAL_VIDEOS = 12;
 
-const emptyChannels: PaginatedResult<ChannelItem> = {
-	items: [],
-	pageInfo: { totalResults: 0 }
-};
-
-async function fetchAuthData(accessToken: string, userId: string) {
+async function fetchCuratedData(accessToken: string, userId: string) {
 	const subscriptionsPromise = getSubscriptions(accessToken, userId).catch((err) => {
 		console.error('[HOME PAGE] getSubscriptions FAILED:', err);
-		return emptyChannels;
+		return { items: [], pageInfo: { totalResults: 0 } };
 	});
 
-	/* Fetch subscription feed pages until we have enough filtered videos. */
+	/* Fetch curated feed pages until we have enough filtered videos. */
 	const collected: VideoItem[] = [];
+	let cursorVal: import('$lib/server/youtube').CuratedFeedCursor | undefined = undefined;
 	let hasMore = true;
-	let cursor: SubFeedCursor | undefined = undefined;
 
 	while (collected.length < TARGET_INITIAL_VIDEOS && hasMore) {
-		let feedResult;
+		let result;
 		try {
-			feedResult = await getSubscriptionFeed(accessToken, userId, cursor);
+			result = await getCuratedFeed(accessToken, userId, 20, cursorVal);
 		} catch (err) {
-			console.error('[HOME PAGE] getSubscriptionFeed FAILED:', err);
+			console.error('[HOME PAGE] getCuratedFeed FAILED:', err);
 			break;
 		}
-
-		const clean = filterOutBrokenVideos(feedResult.items);
+		const clean = filterOutBrokenVideos(result.items);
 		const filtered = await filterOutShorts(clean);
 		collected.push(...filtered);
-		cursor = feedResult.cursor;
-		hasMore = !!cursor;
+		cursorVal = result.cursor;
+		hasMore = !!cursorVal;
 	}
 
 	const subscriptions = await subscriptionsPromise;
@@ -59,7 +54,7 @@ async function fetchAuthData(accessToken: string, userId: string) {
 	return {
 		subscriptions: subscriptions.items,
 		feed: collected,
-		cursor
+		cursor: cursorVal
 	};
 }
 
@@ -69,7 +64,6 @@ async function fetchAnonData(categoryId?: string) {
 		return [] as { id: string; title: string }[];
 	});
 
-	/* Fetch trending pages until we have enough filtered videos. */
 	const collected: VideoItem[] = [];
 	let hasMore = true;
 	let currentToken: string | undefined = undefined;
@@ -106,7 +100,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		return {
 			authenticated: true as const,
 			streamed: {
-				authData: fetchAuthData(locals.session.accessToken, locals.session.channelId)
+				authData: fetchCuratedData(locals.session.accessToken, locals.session.channelId)
 			}
 		};
 	}

@@ -14,10 +14,45 @@ import { Redis } from '@upstash/redis';
 let redis: Redis | null = null;
 
 /**
+ * Circuit breaker: when Redis returns a rate-limit or daily-quota error,
+ * we disable all Redis calls until this timestamp to stop burning quota.
+ * Resets automatically after RATE_LIMIT_BACKOFF_MS.
+ */
+let redisDisabledUntil = 0;
+const RATE_LIMIT_BACKOFF_MS = 5 * 60 * 1000; // 5 minutes
+
+function isRateLimitError(err: unknown): boolean {
+	if (err instanceof Error) {
+		const msg = err.message.toLowerCase();
+		return (
+			msg.includes('rate limit') ||
+			msg.includes('max daily') ||
+			msg.includes('limit exceeded') ||
+			msg.includes('too many requests') ||
+			msg.includes('err_limit')
+		);
+	}
+	return false;
+}
+
+function handleRedisError(err: unknown, context: string): void {
+	if (isRateLimitError(err)) {
+		redisDisabledUntil = Date.now() + RATE_LIMIT_BACKOFF_MS;
+		console.warn(
+			`[CACHE] Redis rate limit hit — disabling Redis for ${RATE_LIMIT_BACKOFF_MS / 60000} min. Context: ${context}`
+		);
+	}
+	// Other errors are silent — L1 in-memory cache is the fallback.
+}
+
+/**
  * Lazily initialize the Redis client. Returns null if credentials are missing
- * (e.g. local development without Upstash configured).
+ * (e.g. local development without Upstash configured) or if the circuit
+ * breaker is open due to a recent rate-limit error.
  */
 function getRedis(): Redis | null {
+	if (Date.now() < redisDisabledUntil) return null;
+
 	if (redis) return redis;
 
 	const url =
@@ -51,7 +86,8 @@ export async function redisGet<T>(key: string): Promise<T | undefined> {
 	try {
 		const value = await client.get<T>(key);
 		return value ?? undefined;
-	} catch {
+	} catch (err) {
+		handleRedisError(err, `get(${key})`);
 		return undefined;
 	}
 }
@@ -65,8 +101,8 @@ export function redisSet<T>(key: string, value: T, ttlMs: number): void {
 	if (!client) return;
 
 	const ttlSeconds = Math.max(1, Math.round(ttlMs / 1000));
-	client.set(key, value, { ex: ttlSeconds }).catch(() => {
-		/* Silently ignore write failures — the in-memory cache is the fallback. */
+	client.set(key, value, { ex: ttlSeconds }).catch((err) => {
+		handleRedisError(err, `set(${key})`);
 	});
 }
 
@@ -87,7 +123,8 @@ export async function redisMGet<T>(keys: string[]): Promise<Map<string, T>> {
 				result.set(keys[i], v);
 			}
 		}
-	} catch {
+	} catch (err) {
+		handleRedisError(err, `mget(${keys.length} keys)`);
 		/* Return empty map on error — callers fall back to HEAD probes. */
 	}
 
@@ -107,12 +144,12 @@ export function redisMSet(entries: Array<{ key: string; value: unknown; ttlMs: n
 		const ttlSeconds = Math.max(1, Math.round(ttlMs / 1000));
 		pipeline.set(key, value, { ex: ttlSeconds });
 	}
-	pipeline.exec().catch(() => {
-		/* Silently ignore pipeline failures. */
+	pipeline.exec().catch((err) => {
+		handleRedisError(err, `mset(${entries.length} keys)`);
 	});
 }
 
-/** Check if Redis is configured and available. */
+/** Check if Redis is configured and available (and not circuit-broken). */
 export function isRedisAvailable(): boolean {
 	return getRedis() !== null;
 }
