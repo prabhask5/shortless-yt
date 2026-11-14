@@ -122,7 +122,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 	/* ── Rate limiting for API endpoints ────────────────────────────────
 	 * Applies to all /api/ routes including auth endpoints. */
 	if (path.startsWith('/api/')) {
-		const ip = event.getClientAddress();
+		/* Behind Cloudflare the socket address is a proxy; Cloudflare puts the real
+		 * visitor IP in CF-Connecting-IP (the origin only accepts Cloudflare IPs). */
+		const ip = event.request.headers.get('cf-connecting-ip') ?? event.getClientAddress();
 		if (isRateLimited(ip)) {
 			console.warn(
 				`[RATE LIMIT] IP ${ip} exceeded ${RATE_LIMIT_MAX_REQUESTS} requests/min on ${path}`

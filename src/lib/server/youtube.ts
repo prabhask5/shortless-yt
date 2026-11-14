@@ -15,7 +15,7 @@
  *
  * **Caching layers:**
  * 1. L1 (in-memory) — data lives for 3x the nominal TTL (stale-while-revalidate).
- * 2. L2 (Upstash Redis) — data lives for 2x TTL, persists across serverless restarts.
+ * 2. L2 (Redis) — data lives for 2x TTL, persists across serverless restarts.
  * 3. Smart revalidation — on stale L1 hit, a 1-item API call checks if data changed.
  *    If unchanged, the cache TTL is bumped without re-fetching the full dataset.
  *

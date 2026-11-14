@@ -1,0 +1,11 @@
+node_modules
+build
+.svelte-kit
+.vercel
+.git
+.husky
+.env
+.env.*
+!.env.example
+extension
+*.md
